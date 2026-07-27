@@ -25,12 +25,24 @@ from src.config import LOTTERY_CONFIGS, PATHS  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="使用最新模型预测彩票开奖号码")
-    parser.add_argument("--name", default=None, help="彩票类型代码，如 ssq / dlt / kl8 （必需）")
-    parser.add_argument("--list-models", action="store_true", help="列出已训练的模型窗口并退出")
-    parser.add_argument("--window-size", type=int, default=None, help="使用指定窗口大小的模型进行预测")
+    parser = argparse.ArgumentParser(description="预测彩票开奖号码（支持新旧两种模式）")
+    parser.add_argument("--name", default=None, help="彩票类型代码，如 ssq / sd / qlc （必需）")
+    parser.add_argument("--list-models", action="store_true", help="列出已训练的模型并退出")
+    parser.add_argument("--window-size", type=int, default=None, help="使用指定窗口大小的模型（旧模式）")
     parser.add_argument("--save", action="store_true", help="是否将预测结果保存到 predict/<code>/ 目录")
     parser.add_argument("--source", default=None, help="数据源：fivehundred / local_csv，默认读取配置")
+    # 新模式参数
+    parser.add_argument(
+        "--method",
+        default="xgb",
+        choices=["xgb", "lstm", "poisson", "stacking"],
+        help="预测方法（新模式，默认 xgb）",
+    )
+    parser.add_argument(
+        "--legacy",
+        action="store_true",
+        help="使用旧版 TF LSTM 模式（pipeline.py）",
+    )
     return parser.parse_args()
 
 
@@ -76,23 +88,43 @@ def main() -> None:
     if code not in LOTTERY_CONFIGS:
         raise SystemExit(f"不支持的彩票类型：{args.name}，有效选项：{', '.join(LOTTERY_CONFIGS.keys())}")
 
-    # If window_size not provided, pick the latest window_* folder under model/<code>/
-    window_size = args.window_size
-    if window_size is None:
-        model_dir = PATHS["model"] / code
-        if model_dir.exists():
-            windows = [p for p in model_dir.iterdir() if p.is_dir() and p.name.startswith("window_")]
-            if windows:
-                latest = sorted(windows, key=lambda p: int(p.name.split("_")[-1]) if p.name.split("_")[-1].isdigit() else -1)[-1]
-                try:
-                    window_size = int(latest.name.split("_")[-1])
-                except Exception:
-                    window_size = None
-    predictions = predict_latest(code, window_size=args.window_size, source=args.source)
-    logger.info("预测结果: {}", predictions)
-    if args.save:
-        file_path = save_prediction(code, predictions)
-        logger.success("预测结果已保存到 {}", file_path)
+    if args.legacy:
+        # 旧模式
+        window_size = args.window_size
+        if window_size is None:
+            model_dir = PATHS["model"] / code
+            if model_dir.exists():
+                windows = [p for p in model_dir.iterdir() if p.is_dir() and p.name.startswith("window_")]
+                if windows:
+                    latest = sorted(windows, key=lambda p: int(p.name.split("_")[-1]) if p.name.split("_")[-1].isdigit() else -1)[-1]
+                    try:
+                        window_size = int(latest.name.split("_")[-1])
+                    except Exception:
+                        window_size = None
+        predictions = predict_latest(code, window_size=args.window_size, source=args.source)
+        logger.info("预测结果: {}", predictions)
+        if args.save:
+            file_path = save_prediction(code, predictions)
+            logger.success("预测结果已保存到 {}", file_path)
+    else:
+        # 新模式
+        from src.unified_pipeline import UnifiedPipeline
+        from src.data_fetcher import load_history
+
+        df = load_history(code)
+        pipeline = UnifiedPipeline(code, method=args.method)
+        pred = pipeline.predict(df)
+        logger.info("预测结果: 红球={}, 蓝球={}", pred.red_balls, pred.blue_ball)
+        if args.save:
+            output_dir = PATHS["predict"] / code
+            output_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            path = output_dir / f"prediction_{timestamp}.json"
+            path.write_text(
+                json.dumps(pred.to_dict(), ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            logger.success("预测结果已保存到 {}", path)
 
 
 if __name__ == "__main__":
