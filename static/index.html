@@ -343,6 +343,10 @@
             const methodLabel = {'xgb': 'XGBoost', 'lstm': 'LSTM', 'poisson': 'Poisson 先验', 'stacking': 'Stacking 集成'};
             try {
                 const res = await fetch(`/api/predict/${currentCode}?method=${method}`);
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail || `HTTP ${res.status}`);
+                }
                 const data = await res.json();
                 const probaHtml = data.probabilities
                     ? `<div class="card-meta" style="margin-top:8px;">概率最高: #${data.probabilities.indexOf(Math.max(...data.probabilities)) + 1}</div>`
@@ -380,7 +384,12 @@
                     });
                 }
             } catch (e) {
-                grid.innerHTML = `<div class="card" style="text-align:center;padding:40px;color:#e74c3c;">预测失败: ${e.message}<br>请确认已训练模型</div>`;
+                const msg = e.message || '未知错误';
+                let hint = '';
+                if (msg.includes('404') || msg.includes('未找到') || msg.includes('未训练')) {
+                    hint = '<br>请先在命令行运行模型训练：<br><code style="background:#f0f0f0;padding:2px 6px;border-radius:4px;">python scripts/train.py --name ssq --method xgb</code>';
+                }
+                grid.innerHTML = `<div class="card" style="text-align:center;padding:40px;color:#e74c3c;">预测失败: ${msg}${hint}</div>`;
             }
         }
 

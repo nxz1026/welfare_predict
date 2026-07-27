@@ -139,9 +139,14 @@ async def api_predict(request: Request, code: str, method: str = "xgb"):
     if code not in LOTTERY_CONFIGS:
         raise HTTPException(400, f"未知彩种: {code}")
 
-    df = load_history(code)
-    pipeline = UnifiedPipeline(code, method=method)
-    pred = pipeline.predict(df)
+    try:
+        df = load_history(code)
+        pipeline = UnifiedPipeline(code, method=method)
+        pred = pipeline.predict(df)
+    except FileNotFoundError as e:
+        raise HTTPException(404, f"未找到已训练的 {method} 模型，请先训练: {e}")
+    except Exception as e:
+        raise HTTPException(500, f"预测失败: {e}")
 
     return {
         "code": code,
