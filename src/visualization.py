@@ -239,22 +239,23 @@ def generate_strategy_ranking_text(
         格式化文本
     """
     lines = []
-    lines.append("=" * 35)
-    lines.append("      策略长期表现排行")
-    lines.append("=" * 35)
-    lines.append(f"{'策略':<8} {'平均命中':<10} {'ROI':<10}")
-    lines.append("-" * 35)
+    lines.append("=" * 45)
+    lines.append("           策略长期表现排行")
+    lines.append("=" * 45)
+    lines.append(f"{'策略':<10} {'平均命中':<10} {'蓝球命中':<10} {'ROI':<10}")
+    lines.append("-" * 45)
 
     sorted_strategies = sorted(ranking.items(), key=lambda x: x[1].get("avg_match", 0), reverse=True)
 
     for name, metrics in sorted_strategies:
         avg_match = metrics.get("avg_match", 0)
+        blue_match = metrics.get("blue_match", 0)
         roi = metrics.get("roi", 0)
-        lines.append(f"{name:<8} {avg_match:<10.2f} {roi:<10.2%}")
+        lines.append(f"{name:<10} {avg_match:<10.2f} {blue_match:<10} {roi:<10.2%}")
 
-    lines.append("-" * 35)
-    lines.append("注: 历史表现不代表未来结果")
-    lines.append("=" * 35)
+    lines.append("-" * 45)
+    lines.append("注: 历史表现不代表未来结果，彩票本质随机")
+    lines.append("=" * 45)
 
     return "\n".join(lines)
 
