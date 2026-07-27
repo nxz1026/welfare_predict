@@ -31,6 +31,8 @@ class SequenceModelSpec:
     embedding_dim: int
     hidden_units: Iterable[int]
     dropout: float = 0.2
+    min_val: int = 1
+    max_val: int = 33
 
 
 @dataclass(frozen=True)
@@ -190,6 +192,8 @@ LOTTERY_CONFIGS: Dict[str, LotteryModelConfig] = {
             embedding_dim=32,
             hidden_units=(64, 32),
             dropout=0.2,
+            min_val=0,
+            max_val=9,
         ),
         blue=None,
         default_window=5,

@@ -278,8 +278,9 @@ class UnifiedPipeline:
         else:
             raise ValueError(f"未知策略: {strategy}")
 
-        # 转换为 1-based 号码
-        red_balls = sorted([int(i + 1) for i in selected_idx])
+        # 转换为 base 号码
+        offset = self.config.red.min_val
+        red_balls = sorted([int(i + offset) for i in selected_idx])
 
         # 蓝球（如果有配置）
         blue_ball = None

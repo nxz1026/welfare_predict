@@ -91,19 +91,21 @@ class ConservativeStrategy:
         # 综合历史 + 近期（近期权重更高）
         combined_score = 0.3 * hot_cold.values + 0.7 * hot_recent.values
 
-        # 选分数最高的 6 个
-        selected_idx = np.argsort(combined_score)[-6:]
-        red_balls = sorted([int(i + 1) for i in selected_idx])
+        # 选分数最高的 N 个
+        n = self.config.red.sequence_len
+        offset = self.config.red.min_val
+        selected_idx = np.argsort(combined_score)[-n:]
+        red_balls = sorted([int(i + offset) for i in selected_idx])
 
-        blue_ball = self._select_blue(df)
+        blue_ball = self._select_blue(df) if self.config.blue else None
 
         return StrategyResult(
             strategy_name=self.name,
             red_balls=red_balls,
             blue_ball=blue_ball,
             analysis={
-                "hot_numbers": sorted([int(i+1) for i in np.argsort(hot_recent.values)[-5:]]),
-                "cold_numbers": sorted([int(i+1) for i in np.argsort(hot_recent.values)[:5]]),
+                "hot_numbers": sorted([int(i + offset) for i in np.argsort(hot_recent.values)[-5:]]),
+                "cold_numbers": sorted([int(i + offset) for i in np.argsort(hot_recent.values)[:5]]),
                 "avg_sum": int(analysis.get("avg_sum", 0)),
             },
             confidence_note="基于近 30 期热号统计",
@@ -148,20 +150,20 @@ class AggressiveStrategy:
         skip_df = compute_skip_features(df, self.config)
         skip = skip_df.iloc[-1] if isinstance(skip_df, pd.DataFrame) else skip_df
 
-        # 选 skip 值最大的 6 个（最"该出"的号码）
-        selected_idx = np.argsort(skip.values)[-6:]
-        red_balls = sorted([int(i + 1) for i in selected_idx])
+        n = self.config.red.sequence_len
+        offset = self.config.red.min_val
+        selected_idx = np.argsort(skip.values)[-n:]
+        red_balls = sorted([int(i + offset) for i in selected_idx])
 
-        # 蓝球：选遗漏最大的（使用优化后的方法）
-        blue_ball = self._select_blue(df)
+        blue_ball = self._select_blue(df) if self.config.blue else None
 
         return StrategyResult(
             strategy_name=self.name,
             red_balls=red_balls,
             blue_ball=blue_ball,
             analysis={
-                "max_skip_values": {int(i+1): int(skip.values[i]) for i in np.argsort(skip.values)[-5:]},
-                "target_numbers": sorted([int(i+1) for i in np.argsort(skip.values)[-5:]]),
+                "max_skip_values": {int(i+offset): int(skip.values[i]) for i in np.argsort(skip.values)[-5:]},
+                "target_numbers": sorted([int(i+offset) for i in np.argsort(skip.values)[-5:]]),
             },
             confidence_note="基于历史遗漏最大值",
             display_name="冷门博击",
@@ -184,31 +186,29 @@ class BalancedStrategy:
         df: pd.DataFrame,
         analysis: Dict[str, Any],  # P2-03: any → Any
     ) -> StrategyResult:
-        # 从概率均匀分布出发，微调满足约束
         avg_sum = analysis.get("avg_sum", 100)
+        n = self.config.red.sequence_len
+        offset = self.config.red.min_val
+        num_range = self.config.red.num_classes
+        pool = list(range(offset, offset + num_range))
 
-        # 随机生成 N 组，选和值最接近均值 + 奇偶比 3:3 的
         best_combo = None
         best_score = float('inf')
+        target_odd = n // 2
 
         for _ in range(1000):
-            combo = sorted(random.sample(range(1, self.config.red.num_classes + 1), 6))
+            combo = sorted(random.sample(pool, n))
             s = sum(combo)
             odd_count = sum(1 for x in combo if x % 2 == 1)
-
-            # 评分：偏离均值的程度 + 奇偶偏离程度
-            sum_penalty = abs(s - avg_sum) / 20
-            odd_penalty = abs(odd_count - 3)
+            sum_penalty = abs(s - avg_sum) / max(20, num_range)
+            odd_penalty = abs(odd_count - target_odd)
             score = sum_penalty + odd_penalty
-
             if score < best_score:
                 best_score = score
                 best_combo = combo
 
-        red_balls = best_combo or sorted(random.sample(range(1, self.config.red.num_classes + 1), 6))
-
-        # 蓝球随机
-        blue_ball = random.randint(1, self.config.blue.num_classes)
+        red_balls = best_combo or sorted(random.sample(pool, n))
+        blue_ball = random.randint(self.config.blue.min_val, self.config.blue.max_val) if self.config.blue else None
 
         return StrategyResult(
             strategy_name=self.name,
@@ -241,28 +241,27 @@ class MysticStrategy:
         analysis: Dict[str, Any],  # P2-03: any → Any
         lucky_numbers: Optional[List[int]] = None,
     ) -> StrategyResult:
-        # 经典吉利数字（中国文化）
-        default_lucky = [6, 8, 9, 16, 18, 26, 28, 33]
+        offset = self.config.red.min_val
+        num_range = self.config.red.num_classes
+        n = self.config.red.sequence_len
+        pool = list(range(offset, offset + num_range))
+
+        default_lucky = [n for n in [6, 8, 9, 16, 18, 26, 28, 33] if offset <= n < offset + num_range]
         lucky = lucky_numbers or default_lucky
+        lucky = [n for n in lucky if offset <= n < offset + num_range]
 
-        # 过滤掉超出红球范围的
-        lucky = [n for n in lucky if 1 <= n <= self.config.red.num_classes]
-
-        # 选 3 个幸运数字 + 3 个随机
-        lucky_part = random.sample(lucky, min(3, len(lucky)))
-        remaining = [n for n in range(1, self.config.red.num_classes + 1) if n not in lucky_part]
-        random_part = random.sample(
-            remaining,
-            min(3, self.config.red.num_classes - len(lucky_part)),
-        )
+        lucky_part = random.sample(lucky, min(n // 2, len(lucky)))
+        remaining = [x for x in pool if x not in lucky_part]
+        random_part = random.sample(remaining, n - len(lucky_part))
 
         red_balls = sorted(lucky_part + random_part)
 
-        # 蓝球吉利数字（取配置范围内的值）
-        blue_pool = [b for b in [6, 8, 9, 16] if 1 <= b <= self.config.blue.num_classes]
-        if not blue_pool:
-            blue_pool = [random.randint(1, self.config.blue.num_classes)]
-        blue_ball = random.choice(blue_pool)
+        blue_ball = None
+        if self.config.blue:
+            blue_pool = [b for b in [6, 8, 9, 16] if self.config.blue.min_val <= b <= self.config.blue.max_val]
+            if not blue_pool:
+                blue_pool = [random.randint(self.config.blue.min_val, self.config.blue.max_val)]
+            blue_ball = random.choice(blue_pool)
 
         return StrategyResult(
             strategy_name=self.name,
@@ -308,7 +307,7 @@ class RecommendationEngine:
 
     def _compute_analysis(self, df: pd.DataFrame) -> Dict[str, Any]:  # P2-03: any → Any
         """计算分析数据"""
-        red_cols = ["红球_1", "红球_2", "红球_3", "红球_4", "红球_5", "红球_6"]
+        red_cols = [f"红球_{i+1}" for i in range(self.config.red.sequence_len)]
 
         sums = []
         for _, row in df.iterrows():

@@ -246,14 +246,14 @@ async def api_custom_recommend(request: Request, code: str, data: CustomRecommen
     errors = []
 
     if user_reds:
-        if len(user_reds) > 6:
-            errors.append("红球最多输入 6 个")
+        if len(user_reds) > config.red.sequence_len:
+            errors.append(f"最多输入 {config.red.sequence_len} 个号码")
         elif len(set(user_reds)) != len(user_reds):
-            errors.append("红球不能重复")
-        elif any(r < 1 or r > 33 for r in user_reds):
-            errors.append("红球范围: 1-33")
-        if user_blue is not None and (user_blue < 1 or user_blue > 16):
-            errors.append("蓝球范围: 1-16")
+            errors.append("号码不能重复")
+        elif any(r < config.red.min_val or r > config.red.max_val for r in user_reds):
+            errors.append(f"号码范围: {config.red.min_val}-{config.red.max_val}")
+        if config.blue and user_blue is not None and (user_blue < config.blue.min_val or user_blue > config.blue.max_val):
+            errors.append(f"蓝球范围: {config.blue.min_val}-{config.blue.max_val}")
         if errors:
             raise HTTPException(400, "；".join(errors))
 
@@ -278,7 +278,7 @@ async def api_custom_recommend(request: Request, code: str, data: CustomRecommen
 
         # 根据用户站位补全
         locked = set(user_reds)
-        available = [n for n in range(1, config.red.num_classes + 1) if n not in locked]
+        available = [n for n in range(config.red.min_val, config.red.min_val + config.red.num_classes) if n not in locked]
         available_probas = [(n, probas[n-1]) for n in available]
         available_probas.sort(key=lambda x: -x[1])
         needed = config.red.sequence_len - len(locked)
@@ -332,7 +332,7 @@ async def api_custom_recommend(request: Request, code: str, data: CustomRecommen
             needed = config.red.sequence_len - len(locked)
             extra = extra[:needed]
             while len(extra) < needed:
-                fallback = [n for n in range(1, config.red.num_classes + 1) if n not in locked and n not in extra]
+                fallback = [n for n in range(config.red.min_val, config.red.min_val + config.red.num_classes) if n not in locked and n not in extra]
                 extra.append(fallback[len(extra) % len(fallback)])
             all_reds = sorted(user_reds + extra)
         else:
@@ -357,7 +357,7 @@ async def api_custom_recommend(request: Request, code: str, data: CustomRecommen
             )
         elif strategy_key == "aggressive":
             skip_vals = [(n, int(last_skip[f"skip_{n}"])) for n in all_reds] if last_skip is not None else []
-            max_skip_all = max(int(last_skip[f"skip_{n}"]) for n in range(1, config.red.num_classes+1)) if last_skip is not None else 0
+            max_skip_all = max(int(last_skip[f"skip_{n}"]) for n in range(config.red.min_val, config.red.min_val + config.red.num_classes)) if last_skip is not None else 0
             skip_str = "、".join(f"#{n}(遗漏{c}期)" for n, c in skip_vals[:3]) if skip_vals else ""
             reason = (
                 f"【冷门博击】追踪遗漏值最大的号码，这些号码长时间未开出，"
@@ -570,8 +570,9 @@ async def api_history(
     if code not in LOTTERY_CONFIGS:
         raise HTTPException(400, f"未知彩种: {code}")
 
+    import pandas as pd
     df = load_history(code)
-    recent = df.tail(limit)
+    recent = df.head(limit)
 
     red_cols = [f"红球_{i+1}" for i in range(LOTTERY_CONFIGS[code].red.sequence_len)]
     records = []
@@ -583,6 +584,10 @@ async def api_history(
         }
         if "蓝球_1" in df.columns:
             record["blue"] = int(row["蓝球_1"])
+        if "试机号" in df.columns and pd.notna(row.get("试机号")):
+            record["try_code"] = str(int(row["试机号"]))
+        if "开奖号码" in df.columns and pd.notna(row.get("开奖号码")):
+            record["winning_number"] = str(row["开奖号码"])
         records.append(record)
 
     return {
@@ -605,17 +610,45 @@ async def api_stats(
 
     df = load_history(code)
     config = LOTTERY_CONFIGS[code]
+    offset = config.red.min_val
 
-    # 频率统计
+    # 3D 按位置统计（百位/十位/个位）
+    if code == "sd":
+        recent = df.head(periods)
+        pos_names = ["百位", "十位", "个位"]
+        hot_by_pos = []
+        skip_by_pos = []
+        for p in range(3):
+            col = f"红球_{p+1}"
+            # 频率
+            counts = recent[col].value_counts()
+            hot_pos = [int(counts.get(d, 0)) for d in range(offset, offset + config.red.num_classes)]
+            hot_by_pos.extend(hot_pos)
+            # 遗漏
+            last_occurrence = {}
+            for i in range(len(df)):
+                val = df.iloc[i][col]
+                if val not in last_occurrence:
+                    last_occurrence[val] = i
+            skip_pos = [int(last_occurrence.get(d, 100)) for d in range(offset, offset + config.red.num_classes)]
+            skip_by_pos.extend(skip_pos)
+        return {
+            "code": code,
+            "name": config.name,
+            "total_periods": len(df),
+            "numbers": list(range(offset, offset + config.red.num_classes)),
+            "hot_values": hot_by_pos,
+            "skip_values": skip_by_pos,
+            "hot_by_pos": True,
+        }
+
+    # 非 3D：原有逻辑
     hot_cold = compute_hot_cold_features(df, config, window=periods)
     last_hot = hot_cold.iloc[-1]
-
-    # 遗漏统计
     skip = compute_skip_features(df, config)
     last_skip = skip.iloc[-1]
 
-    # 组装图表数据
-    numbers = list(range(1, config.red.num_classes + 1))
+    numbers = list(range(offset, offset + config.red.num_classes))
     hot_values = [int(last_hot[f"hot_count_{n}"]) for n in numbers]
     skip_values = [int(last_skip[f"skip_{n}"]) for n in numbers]
 

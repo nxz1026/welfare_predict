@@ -96,11 +96,8 @@ def _build_history_url(config: LotteryModelConfig, start: Optional[int], end: Op
     if path.endswith(".shtml"):
         return f"{base}{path}"
 
-    start_issue = start or 1
-    end_issue = end or 999999
-    limit = end_issue - start_issue + 1
-    query = f"{path}?start={start_issue}&end={end_issue}&limit={limit}"
-    return f"{base}{query}"
+    # .php 接口用默认返回（~30 期），limit 过大导致异常
+    return f"{base}{path}"
 
 
 def _parse_issue_list(config: LotteryModelConfig, html: str) -> pd.DataFrame:
@@ -124,6 +121,9 @@ def _parse_issue_list(config: LotteryModelConfig, html: str) -> pd.DataFrame:
         issue = tds[0].get_text(strip=True)
         if not issue or issue == "期号":
             continue
+        # 过滤非数字期号的行（表头/注数/金额等）
+        if not issue.isdigit():
+            continue
         record = {"期数": issue}
         if config.code == "ssq":
             for idx in range(config.red.sequence_len):
@@ -142,7 +142,7 @@ def _parse_issue_list(config: LotteryModelConfig, html: str) -> pd.DataFrame:
         elif config.code in {"pls", "sd", "qxc"}:
             digits = tds[1].get_text(strip=True).split(" ")
             for idx, value in enumerate(digits):
-                record[f"红球_{idx + 1}"] = value
+                record[f"红球_{idx + 1}"] = int(float(value))
         elif config.code == "qlc":
             for idx in range(config.red.sequence_len):
                 record[f"红球_{idx + 1}"] = tds[idx + 1].get_text(strip=True)
@@ -230,17 +230,67 @@ def download_history(
     return meta
 
 
-def load_history(code: str) -> pd.DataFrame:
-    """加载本地已下载的历史数据。"""
+def _repair_sd_data():
+    """从 3d/ 原始数据重建 sd/ 数据文件（含试机号、开奖号码）。"""
+    src = PATHS["data"] / "3d" / DATA_FILE_NAME
+    dst = PATHS["data"] / "sd" / DATA_FILE_NAME
+    if not src.exists():
+        raise FileNotFoundError(f"原始 3D 数据不存在，无法重建: {src}")
+    df = pd.read_csv(src, encoding="utf-8")
+    out = pd.DataFrame()
+    out["期数"] = df["issue"]
+    out["红球_1"] = df["红球1"]
+    out["红球_2"] = df["红球2"]
+    out["红球_3"] = df["红球3"]
+    try_code = df["tryCode"].fillna(-1).astype(int)
+    out["试机号"] = try_code.replace(-1, "")
+    out["开奖号码"] = df["frontWinningNum"]
+    out["开奖日期"] = df["openTime"]
+    out.to_csv(dst, index=False, encoding="utf-8-sig")
+    logger.info("sd 数据已从 3d/ 原始数据重建: {} 期", len(out))
+    return out
 
+
+def load_history(code: str) -> pd.DataFrame:
+    """加载本地已下载的历史数据。自动检测损坏并尝试重建。"""
     cfg = LOTTERY_CONFIGS[code]
     path = PATHS["data"] / cfg.code / DATA_FILE_NAME
     if not path.exists():
         raise FileNotFoundError(f"未找到 {cfg.name} 历史数据，请先执行下载: {path}")
-    df = pd.read_csv(path, encoding="utf-8")
+
+    try:
+        df = pd.read_csv(path, encoding="utf-8-sig")
+    except Exception:
+        df = pd.read_csv(path, encoding="utf-8")
+
     if "期数" not in df.columns:
-        raise ValueError(f"{path} 缺失【期数】字段，数据损坏或格式异常")
+        # 文件存在但无期数列 = 损坏，尝试重建
+        logger.warning("{} 数据损坏（缺失期数列），尝试自动重建...", cfg.name)
+        return _repair_data(code, cfg, path)
+
+    red_cols = [f"红球_{i+1}" for i in range(cfg.red.sequence_len)]
+    missing_red = [c for c in red_cols if c not in df.columns]
+    if missing_red:
+        logger.warning("{} 数据缺少 {}，尝试自动重建...", cfg.name, missing_red)
+        return _repair_data(code, cfg, path)
+
     return df
+
+
+def _repair_data(code: str, cfg, path) -> pd.DataFrame:
+    """通用数据重建：sd 用本地备份，其余从网络重新下载。"""
+    if code == "sd":
+        return _repair_sd_data()
+    logger.info("尝试从 500.com 重新下载 {} 数据...", cfg.name)
+    try:
+        meta = download_history(code)
+        df = pd.read_csv(path, encoding="utf-8")
+        if "期数" in df.columns:
+            logger.success("{} 数据已重新下载: {} 期", cfg.name, meta.total_issues)
+            return df
+    except Exception as e:
+        logger.error("重新下载 {} 数据失败: {}", cfg.name, e)
+    raise ValueError(f"{path} 数据损坏且自动修复失败，请手动执行数据更新")
 
 
 __all__ = [

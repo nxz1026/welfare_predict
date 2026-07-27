@@ -58,26 +58,24 @@ def compute_hot_cold_features(
     """
     red_balls = _extract_red_balls(df, config)
     num_classes = config.red.num_classes
+    offset = config.red.min_val
 
     features = np.zeros((len(df), num_classes), dtype=np.float32)
     counter = Counter()
 
     for i in range(len(df)):
-        # 移除滑出窗口的号码
         if i >= window:
             old = red_balls[i - window]
             for b in old:
                 counter[b] -= 1
                 if counter[b] <= 0:
                     del counter[b]
-        # 加入当前期新号码
         for b in red_balls[i]:
             counter[b] += 1
-        # 输出当前计数
-        for num in range(1, num_classes + 1):
-            features[i, num - 1] = counter.get(num, 0)
+        for j, num in enumerate(range(offset, offset + num_classes)):
+            features[i, j] = counter.get(num, 0)
 
-    cols = [f"hot_count_{i}" for i in range(1, num_classes + 1)]
+    cols = [f"hot_count_{i}" for i in range(offset, offset + num_classes)]
     return pd.DataFrame(features, columns=cols)
 
 
@@ -93,25 +91,26 @@ def compute_skip_features(
     """
     red_balls = _extract_red_balls(df, config)
     num_classes = config.red.num_classes
+    offset = config.red.min_val
     max_skip = DEFAULT_MAX_SKIP
+    pool = list(range(offset, offset + num_classes))
 
     features = np.full((len(df), num_classes), max_skip, dtype=np.float32)
-    last_seen = {num: max_skip for num in range(1, num_classes + 1)}
+    last_seen = {num: max_skip for num in pool}
 
     for i in range(len(df)):
         current_numbers = set(red_balls[i])
-        for num in range(1, num_classes + 1):
+        for j, num in enumerate(pool):
             if num in current_numbers:
-                features[i, num - 1] = 0
+                features[i, j] = 0
                 last_seen[num] = 0
             else:
-                features[i, num - 1] = last_seen[num]
-        # 更新所有号码的 skip 计数
+                features[i, j] = last_seen[num]
         for num in last_seen:
             if num not in current_numbers:
                 last_seen[num] += 1
 
-    cols = [f"skip_{i}" for i in range(1, num_classes + 1)]
+    cols = [f"skip_{i}" for i in pool]
     return pd.DataFrame(features, columns=cols)
 
 
@@ -127,23 +126,25 @@ def compute_interval_features(
     """
     red_balls = _extract_red_balls(df, config)
     num_classes = config.red.num_classes
+    offset = config.red.min_val
     max_interval = DEFAULT_MAX_INTERVAL
+    pool = list(range(offset, offset + num_classes))
 
     features = np.full((len(df), num_classes), max_interval, dtype=np.float32)
-    positions = {num: [] for num in range(1, num_classes + 1)}
+    positions = {num: [] for num in pool}
 
     for i in range(len(df)):
         current_numbers = set(red_balls[i])
         for num in current_numbers:
             positions[num].append(i)
-        for num in range(1, num_classes + 1):
+        for j, num in enumerate(pool):
             pos_list = positions[num]
             if len(pos_list) >= 2:
-                features[i, num - 1] = pos_list[-1] - pos_list[-2]
+                features[i, j] = pos_list[-1] - pos_list[-2]
             else:
-                features[i, num - 1] = max_interval
+                features[i, j] = max_interval
 
-    cols = [f"interval_{i}" for i in range(1, num_classes + 1)]
+    cols = [f"interval_{i}" for i in pool]
     return pd.DataFrame(features, columns=cols)
 
 
@@ -315,7 +316,7 @@ def build_labels(df: pd.DataFrame, config: LotteryModelConfig) -> np.ndarray:
     """
     cols = [f"红球_{i+1}" for i in range(config.red.sequence_len)]
     balls = df[cols].values.astype(np.int32)
-    return balls - 1  # 1-based -> 0-based
+    return balls - config.red.min_val  # base -> 0-based
 
 
 def build_binary_labels(df: pd.DataFrame, config: LotteryModelConfig) -> np.ndarray:
@@ -326,7 +327,7 @@ def build_binary_labels(df: pd.DataFrame, config: LotteryModelConfig) -> np.ndar
     y[i][j] = 1 表示第 j+1 个号码在第 i 期被选中。
     """
     cols = [f"红球_{i+1}" for i in range(config.red.sequence_len)]
-    balls = df[cols].values.astype(np.int32) - 1  # 1-based -> 0-based
+    balls = df[cols].values.astype(np.int32) - config.red.min_val  # base -> 0-based
 
     n_samples = len(df)
     num_classes = config.red.num_classes

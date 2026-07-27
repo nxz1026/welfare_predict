@@ -43,7 +43,7 @@ def configure_logging():
     logger.remove()
 
     # 控制台输出
-    logger.add(sys.stderr, level=level, format=fmt)
+    logger.add(sys.stderr, level=level, format=fmt, colorize=True)
 
     # 文件输出（按天轮转，保留 7 天）
     if log_file:
@@ -55,6 +55,19 @@ def configure_logging():
             level=level,
             format=fmt,
         )
+
+    # 拦截标准 logging 模块（如 uvicorn 的日志），统一走 loguru 格式
+    import logging
+
+    class InterceptHandler(logging.Handler):
+        def emit(self, record):
+            try:
+                level = logger.level(record.levelname).name
+            except ValueError:
+                level = record.levelno
+            logger.opt(depth=6, exception=record.exc_info).log(level, record.getMessage())
+
+    logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
 
     logger.info("日志系统初始化完成: 级别={}, 输出文件={}", level, log_file)
 
