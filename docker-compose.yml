@@ -1,0 +1,37 @@
+# 福彩推荐系统 — Docker Compose (Windows 部署)
+# 使用方法:
+#   1. 安装 Docker Desktop for Windows
+#   2. 在项目目录打开 PowerShell
+#   3. docker-compose up -d
+#   4. 浏览器访问 http://localhost:8000
+
+version: "3.8"
+
+services:
+  lottery-web:
+    build: .
+    image: lottery-web:latest
+    container_name: lottery-web
+    ports:
+      - "8000:8000"
+    volumes:
+      # 数据持久化 — 数据保存在项目目录的 data/ 下
+      - ./data:/app/data
+      - ./model:/app/model
+    environment:
+      # 修改默认账号密码！
+      - LOTTERY_USER=admin
+      - LOTTERY_PASS=caipiao2026
+      - LOTTERY_SECRET=please-change-this-secret-key
+    restart: unless-stopped
+
+# 可选：添加 Nginx 反代 + HTTPS（生产环境）
+# nginx:
+#   image: nginx:alpine
+#   ports:
+#     - "80:80"
+#     - "443:443"
+#   volumes:
+#     - ./nginx.conf:/etc/nginx/nginx.conf
+#   depends_on:
+#     - lottery-web

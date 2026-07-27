@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>福彩推荐系统</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f7fa;
+            color: #333;
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 16px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 { font-size: 20px; }
+        .header-actions { display: flex; gap: 12px; align-items: center; }
+        .header-actions button {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .tabs {
+            display: flex;
+            background: white;
+            border-bottom: 1px solid #e0e0e0;
+            overflow-x: auto;
+        }
+        .tab {
+            padding: 14px 20px;
+            font-size: 14px;
+            color: #666;
+            cursor: pointer;
+            white-space: nowrap;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+            font-weight: 600;
+        }
+        .content { padding: 16px; max-width: 1200px; margin: 0 auto; }
+        .panel { display: none; }
+        .panel.active { display: block; }
+
+        /* 推荐卡片 */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+        }
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .balls { display: flex; gap: 6px; flex-wrap: wrap; margin: 12px 0; }
+        .ball {
+            width: 36px; height: 36px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: bold; font-size: 14px; color: white;
+        }
+        .ball.red { background: #e74c3c; }
+        .ball.blue { background: #3498db; }
+        .card-meta { font-size: 12px; color: #999; margin-top: 8px; }
+
+        /* 图表容器 */
+        .chart-box {
+            background: white;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        .chart { width: 100%; height: 300px; }
+
+        /* 表格 */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        th, td {
+            padding: 12px;
+            text-align: center;
+            border-bottom: 1px solid #f0f0f0;
+            font-size: 13px;
+        }
+        th { background: #f8f9fa; font-weight: 600; color: #666; }
+        tr:last-child td { border-bottom: none; }
+
+        .refresh-btn {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            width: 56px; height: 56px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            font-size: 24px;
+            box-shadow: 0 4px 12px rgba(102,126,234,0.4);
+            cursor: pointer;
+        }
+        .refresh-btn:active { transform: scale(0.95); }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎰 福彩推荐系统</h1>
+        <div class="header-actions">
+            <span id="lottery-name">双色球</span>
+            <button onclick="logout()">退出</button>
+        </div>
+    </div>
+
+    <div class="tabs">
+        <div class="tab active" onclick="switchTab('recommend')">今日推荐</div>
+        <div class="tab" onclick="switchTab('history')">历史数据</div>
+        <div class="tab" onclick="switchTab('stats')">统计分析</div>
+        <div class="tab" onclick="switchTab('ranking')">策略排行</div>
+    </div>
+
+    <div class="content">
+        <!-- 推荐面板 -->
+        <div class="panel active" id="panel-recommend">
+            <div class="grid" id="recommend-grid"></div>
+        </div>
+
+        <!-- 历史面板 -->
+        <div class="panel" id="panel-history">
+            <table>
+                <thead><tr><th>期号</th><th>日期</th><th>红球</th><th>蓝球</th></tr></thead>
+                <tbody id="history-body"></tbody>
+            </table>
+        </div>
+
+        <!-- 统计面板 -->
+        <div class="panel" id="panel-stats">
+            <div class="chart-box"><div id="hot-chart" class="chart"></div></div>
+            <div class="chart-box"><div id="skip-chart" class="chart"></div></div>
+        </div>
+
+        <!-- 排行面板 -->
+        <div class="panel" id="panel-ranking">
+            <div class="chart-box"><div id="ranking-chart" class="chart"></div></div>
+        </div>
+    </div>
+
+    <button class="refresh-btn" onclick="refreshAll()">↻</button>
+
+    <script>
+        let currentCode = 'ssq';
+        let charts = {};
+
+        // 初始化
+        window.addEventListener('load', () => {
+            checkAuth();
+            refreshAll();
+        });
+
+        async function checkAuth() {
+            const res = await fetch('/api/me');
+            const data = await res.json();
+            if (!data.logged_in) window.location.href = '/login';
+        }
+
+        async function logout() {
+            await fetch('/api/logout', {method: 'POST'});
+            window.location.href = '/login';
+        }
+
+        function switchTab(name) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById('panel-' + name).classList.add('active');
+            // 触发图表 resize
+            Object.values(charts).forEach(c => c.resize());
+        }
+
+        async function refreshAll() {
+            await Promise.all([
+                loadRecommend(),
+                loadHistory(),
+                loadStats(),
+                loadRanking(),
+            ]);
+        }
+
+        // 推荐
+        async function loadRecommend() {
+            const res = await fetch(`/api/recommend/${currentCode}`);
+            const data = await res.json();
+            const grid = document.getElementById('recommend-grid');
+            grid.innerHTML = data.strategies.map(s => `
+                <div class="card">
+                    <div class="card-title">${s.name}</div>
+                    <div class="balls">
+                        ${s.red_balls.map(b => `<span class="ball red">${b}</span>`).join('')}
+                        ${s.blue_ball ? `<span class="ball blue">${s.blue_ball}</span>` : ''}
+                    </div>
+                    <div class="card-meta">${s.analysis ? s.analysis.依据 || '' : ''}</div>
+                </div>
+            `).join('');
+        }
+
+        // 历史
+        async function loadHistory() {
+            const res = await fetch(`/api/history/${currentCode}?limit=30`);
+            const data = await res.json();
+            const body = document.getElementById('history-body');
+            body.innerHTML = data.records.map(r => `
+                <tr>
+                    <td>${r.issue}</td>
+                    <td>${r.date}</td>
+                    <td>${r.reds.join(' ')}</td>
+                    <td>${r.blue || '-'}</td>
+                </tr>
+            `).join('');
+        }
+
+        // 统计图表
+        async function loadStats() {
+            const res = await fetch(`/api/stats/${currentCode}`);
+            const data = await res.json();
+
+            // 热冷号图
+            if (!charts.hot) charts.hot = echarts.init(document.getElementById('hot-chart'));
+            charts.hot.setOption({
+                title: { text: '近30期热号统计', left: 'center' },
+                tooltip: { trigger: 'axis' },
+                xAxis: { type: 'category', data: data.numbers },
+                yAxis: { type: 'value' },
+                series: [{
+                    type: 'bar',
+                    data: data.hot_values,
+                    itemStyle: { color: '#e74c3c' },
+                }],
+            });
+
+            // 遗漏图
+            if (!charts.skip) charts.skip = echarts.init(document.getElementById('skip-chart'));
+            charts.skip.setOption({
+                title: { text: '遗漏值统计', left: 'center' },
+                tooltip: { trigger: 'axis' },
+                xAxis: { type: 'category', data: data.numbers },
+                yAxis: { type: 'value' },
+                series: [{
+                    type: 'bar',
+                    data: data.skip_values,
+                    itemStyle: { color: '#3498db' },
+                }],
+            });
+        }
+
+        // 排行
+        async function loadRanking() {
+            const res = await fetch(`/api/ranking/${currentCode}?window=200&backtest=50`);
+            const data = await res.json();
+
+            const names = Object.keys(data.performances);
+            const avgMatches = names.map(n => data.performances[n].avg_match);
+            const rois = names.map(n => (data.performances[n].roi * 100).toFixed(1));
+
+            if (!charts.ranking) charts.ranking = echarts.init(document.getElementById('ranking-chart'));
+            charts.ranking.setOption({
+                title: { text: '策略排行 (50期回测)', left: 'center' },
+                tooltip: { trigger: 'axis' },
+                legend: { bottom: 0 },
+                xAxis: { type: 'category', data: names },
+                yAxis: [
+                    { type: 'value', name: '平均命中' },
+                    { type: 'value', name: 'ROI (%)' },
+                ],
+                series: [
+                    {
+                        name: '平均命中红球',
+                        type: 'bar',
+                        data: avgMatches,
+                        itemStyle: { color: '#2ecc71' },
+                    },
+                    {
+                        name: 'ROI (%)',
+                        type: 'line',
+                        yAxisIndex: 1,
+                        data: rois,
+                        itemStyle: { color: '#e67e22' },
+                    },
+                ],
+            });
+        }
+
+        // 窗口 resize
+        window.addEventListener('resize', () => {
+            Object.values(charts).forEach(c => c.resize());
+        });
+    </script>
+</body>
+</html>
