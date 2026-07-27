@@ -211,6 +211,23 @@ LOTTERY_CONFIGS: Dict[str, LotteryModelConfig] = {
         default_blue_epochs=0,
         learning_rate=4e-4,
     ),
+    "qlc": LotteryModelConfig(
+        code="qlc",
+        name="七乐彩",
+        red=SequenceModelSpec(
+            sequence_len=7,
+            num_classes=30,
+            embedding_dim=48,
+            hidden_units=(96, 48),
+            dropout=0.25,
+        ),
+        blue=None,
+        default_window=5,
+        default_batch_size=32,
+        default_red_epochs=60,
+        default_blue_epochs=0,
+        learning_rate=5e-4,
+    ),
 }
 
 
