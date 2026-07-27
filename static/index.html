@@ -141,6 +141,7 @@
 
     <div class="tabs">
         <div class="tab active" onclick="switchTab('recommend')">今日推荐</div>
+        <div class="tab" onclick="switchTab('ml-predict')">ML 预测</div>
         <div class="tab" onclick="switchTab('history')">历史数据</div>
         <div class="tab" onclick="switchTab('stats')">统计分析</div>
         <div class="tab" onclick="switchTab('ranking')">策略排行</div>
@@ -150,6 +151,24 @@
         <!-- 推荐面板 -->
         <div class="panel active" id="panel-recommend">
             <div class="grid" id="recommend-grid"></div>
+        </div>
+
+        <!-- ML预测面板 -->
+        <div class="panel" id="panel-ml-predict">
+            <div style="margin-bottom:16px;">
+                <label style="margin-right:8px;">方法：</label>
+                <select id="ml-method" onchange="loadMlPredict()">
+                    <option value="xgb">XGBoost</option>
+                    <option value="lstm">LSTM</option>
+                    <option value="poisson">Poisson 先验</option>
+                    <option value="stacking">Stacking 集成</option>
+                </select>
+                <button onclick="loadMlPredict()" style="margin-left:8px;padding:6px 16px;background:#667eea;color:white;border:none;border-radius:6px;cursor:pointer;">运行预测</button>
+            </div>
+            <div class="grid" id="ml-grid"></div>
+            <div class="chart-box" id="ml-proba-chart-box" style="display:none;">
+                <div id="ml-proba-chart" class="chart"></div>
+            </div>
         </div>
 
         <!-- 历史面板 -->
@@ -225,7 +244,7 @@
                         ${s.red_balls.map(b => `<span class="ball red">${b}</span>`).join('')}
                         ${s.blue_ball ? `<span class="ball blue">${s.blue_ball}</span>` : ''}
                     </div>
-                    <div class="card-meta">${s.analysis ? s.analysis.依据 || '' : ''}</div>
+                    <div class="card-meta">${s.confidence_note || ''}</div>
                 </div>
             `).join('');
         }
@@ -314,6 +333,55 @@
                     },
                 ],
             });
+        }
+
+        // ML预测
+        async function loadMlPredict() {
+            const method = document.getElementById('ml-method').value;
+            const grid = document.getElementById('ml-grid');
+            grid.innerHTML = '<div class="card" style="text-align:center;padding:40px;">正在运行 ML 预测...</div>';
+            const methodLabel = {'xgb': 'XGBoost', 'lstm': 'LSTM', 'poisson': 'Poisson 先验', 'stacking': 'Stacking 集成'};
+            try {
+                const res = await fetch(`/api/predict/${currentCode}?method=${method}`);
+                const data = await res.json();
+                const probaHtml = data.probabilities
+                    ? `<div class="card-meta" style="margin-top:8px;">概率最高: #${data.probabilities.indexOf(Math.max(...data.probabilities)) + 1}</div>`
+                    : '';
+                grid.innerHTML = `
+                    <div class="card">
+                        <div class="card-title">${methodLabel[method] || method} 预测结果</div>
+                        <div class="balls">
+                            ${data.red_balls.map(b => `<span class="ball red">${b}</span>`).join('')}
+                            ${data.blue_ball ? `<span class="ball blue">${data.blue_ball}</span>` : ''}
+                        </div>
+                        <div class="card-meta">方法: ${data.method} | 策略: ${data.strategy}</div>
+                        ${probaHtml}
+                    </div>`;
+
+                // 概率分布图
+                if (data.probabilities && data.probabilities.length > 0) {
+                    document.getElementById('ml-proba-chart-box').style.display = 'block';
+                    const topProba = data.probabilities
+                        .map((p, i) => ({num: i + 1, prob: p}))
+                        .sort((a, b) => b.prob - a.prob)
+                        .slice(0, 15);
+                    if (!charts.mlProba) charts.mlProba = echarts.init(document.getElementById('ml-proba-chart'));
+                    charts.mlProba.setOption({
+                        title: { text: '号码命中概率 TOP 15', left: 'center' },
+                        tooltip: { trigger: 'axis' },
+                        xAxis: { type: 'category', data: topProba.map(x => x.num) },
+                        yAxis: { type: 'value', name: '概率' },
+                        series: [{
+                            type: 'bar',
+                            data: topProba.map(x => parseFloat(x.prob.toFixed(4))),
+                            itemStyle: { color: '#667eea', emphasis: { color: '#764ba2' } },
+                            label: { show: true, position: 'top', formatter: v => (v * 100).toFixed(1) + '%' }
+                        }],
+                    });
+                }
+            } catch (e) {
+                grid.innerHTML = `<div class="card" style="text-align:center;padding:40px;color:#e74c3c;">预测失败: ${e.message}<br>请确认已训练模型</div>`;
+            }
         }
 
         // 窗口 resize

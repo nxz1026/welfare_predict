@@ -150,6 +150,7 @@ async def api_predict(request: Request, code: str, method: str = "xgb"):
         "red_balls": pred.red_balls,
         "blue_ball": pred.blue_ball,
         "strategy": pred.strategy_used,
+        "probabilities": [float(p) for p in pred.probabilities] if pred.probabilities is not None else None,
     }
 
 

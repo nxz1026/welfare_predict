@@ -24,6 +24,7 @@ from src.visualization import generate_strategy_ranking_text
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="福彩策略排行榜")
     parser.add_argument("--code", default="ssq", help="彩票代码")
     parser.add_argument("--window", type=int, default=200, help="回测窗口大小")
@@ -66,8 +67,8 @@ def main():
     print()
     print("详细数据:")
     for name, perf in report.performances.items():
-        print(f"  {name}: 投注{perf.total_bets}期, 成本¥{perf.total_cost:.0f}, "
-              f"奖金¥{perf.total_reward:.0f}, 净利润¥{perf.net_profit:.0f}, "
+        print(f"  {name}: 投注{perf.total_bets}期, 成本CNY{perf.total_cost:.0f}, "
+              f"奖金CNY{perf.total_reward:.0f}, 净利润CNY{perf.net_profit:.0f}, "
               f"ROI={perf.roi:.2%}")
         print(f"    平均命中: {perf.avg_match:.2f}个红球, 蓝球命中: {perf.blue_match_count}次")
         print(f"    奖级分布: {perf.prize_counts}")
