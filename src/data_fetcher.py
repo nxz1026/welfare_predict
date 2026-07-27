@@ -84,7 +84,7 @@ class LotteryHttpClient:
 
 def _build_history_url(config: LotteryModelConfig, start: Optional[int], end: Optional[int]) -> str:
     base = f"https://datachart.500.com/{config.code}/history/"
-    if config.code in {"qxc", "pls", "sd"}:
+    if config.code in {"qxc", "pls", "sd", "ssq", "dlt"}:
         path = "inc/history.php"
     elif config.code == "kl8":
         path = "newinc/jbzs_redblue.php"
