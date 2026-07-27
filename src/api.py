@@ -12,6 +12,7 @@ import secrets
 from datetime import datetime
 from typing import Optional
 
+import numpy as np
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -148,6 +149,11 @@ async def api_predict(request: Request, code: str, method: str = "xgb"):
     except Exception as e:
         raise HTTPException(500, f"预测失败: {e}")
 
+    probas = pred.probabilities
+    if probas is not None:
+        probas = np.nan_to_num(probas, nan=0.0, posinf=0.0, neginf=0.0)
+        probas = probas / probas.sum() if probas.sum() > 0 else probas
+
     return {
         "code": code,
         "name": LOTTERY_CONFIGS[code].name,
@@ -155,7 +161,7 @@ async def api_predict(request: Request, code: str, method: str = "xgb"):
         "red_balls": pred.red_balls,
         "blue_ball": pred.blue_ball,
         "strategy": pred.strategy_used,
-        "probabilities": [float(p) for p in pred.probabilities] if pred.probabilities is not None else None,
+        "probabilities": [float(p) for p in probas] if probas is not None else None,
     }
 
 
