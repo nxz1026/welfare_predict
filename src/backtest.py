@@ -135,11 +135,15 @@ class BacktestEngine:
         window_size: int = 50,  # 训练窗口大小
         bet_cost: float = 2.0,  # 单注成本（元）
         top_k: int = 6,  # 选前 k 个号码
+        use_lstm: bool = True,  # 是否使用 LSTM（慢）
+        xgb_only: bool = False,  # 快速模式：只用 XGBoost + Poisson
     ):
         self.config = config
         self.window_size = window_size
         self.bet_cost = bet_cost
         self.top_k = top_k
+        self.use_lstm = use_lstm
+        self.xgb_only = xgb_only
 
     def _train_models(
         self,
@@ -150,16 +154,24 @@ class BacktestEngine:
         xgb = XGBoostPredictor(self.config, n_estimators=50, max_depth=3, learning_rate=0.1)
         xgb.train(X_train, y_train)
 
-        lstm = LSTMPredictor(self.config, lstm_units=[32, 16], dropout=0.3,
-                            learning_rate=0.001, batch_size=8, epochs=20)
-        lstm.train(X_train, y_train)
+        if self.xgb_only:
+            # 快速模式：跳过 LSTM，减少训练时间
+            lstm = None
+        else:
+            lstm = LSTMPredictor(self.config, lstm_units=[32, 16], dropout=0.3,
+                                learning_rate=0.001, batch_size=16, epochs=5)
+            lstm.train(X_train, y_train)
 
         poisson = PoissonPrior(self.config)
         poisson.train(X_train, y_train)
 
         # Stacking
         xgb_proba = xgb.predict_proba(X_train)
-        lstm_proba = lstm.predict_proba(X_train)
+        if lstm is not None:
+            lstm_proba = lstm.predict_proba(X_train)
+        else:
+            # 快速模式：用 XGBoost 概率填充
+            lstm_proba = xgb_proba.copy()
         poisson_proba = poisson.predict_proba(X_train)
 
         probas = {'xgboost': xgb_proba, 'lstm': lstm_proba, 'poisson': poisson_proba}
@@ -171,14 +183,17 @@ class BacktestEngine:
     def _predict_next(
         self,
         xgb: XGBoostPredictor,
-        lstm: LSTMPredictor,
+        lstm: Optional[LSTMPredictor],
         poisson: PoissonPrior,
         stacking: StackingMetaLearner,
         X_next: np.ndarray,
     ) -> np.ndarray:
         """预测下一期"""
         xgb_proba = xgb.predict_proba(X_next)
-        lstm_proba = lstm.predict_proba(X_next)
+        if lstm is not None:
+            lstm_proba = lstm.predict_proba(X_next)
+        else:
+            lstm_proba = xgb_proba.copy()
         poisson_proba = poisson.predict_proba(X_next)
 
         probas = {'xgboost': xgb_proba, 'lstm': lstm_proba, 'poisson': poisson_proba}
