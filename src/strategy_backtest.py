@@ -19,10 +19,8 @@ import pandas as pd
 from loguru import logger
 
 from .config import LotteryModelConfig, get_lottery_config
-from .recommendation import (
-    RecommendationEngine,
-    StrategyResult,
-)
+from .recommendation import RecommendationEngine
+from .unified_pipeline import UnifiedPipeline
 from .backtest import calculate_prize, get_prize_money
 
 
@@ -71,13 +69,15 @@ class StrategyBacktestEngine:
         self,
         df: pd.DataFrame,
         n_backtest: Optional[int] = None,
+        include_ml: bool = True,
     ) -> RankingReport:
         """
-        运行策略回测。
+        运行策略回测（含规则策略 + 可选 ML 模型）。
 
         Args:
             df: 历史数据
             n_backtest: 回测期数，默认回测所有可用期数
+            include_ml: 是否包含 ML 模型回测（较慢，默认 True）
         """
         red_cols = [f"红球_{i+1}" for i in range(self.config.red.sequence_len)]
 
@@ -92,6 +92,8 @@ class StrategyBacktestEngine:
         stats: Dict[str, Dict] = {}
         engine = RecommendationEngine(self.config.code)
 
+        ml_methods = ["xgb", "lstm", "poisson", "stacking"]
+
         for i in range(n_backtest):
             train_end = i + self.window_size
             test_idx = train_end
@@ -104,43 +106,29 @@ class StrategyBacktestEngine:
             actual_reds = sorted([int(actual_row[c]) for c in red_cols])
             actual_blue = int(actual_row.get("蓝球_1", 0))
 
+            # 规则策略推荐
             try:
                 rec = engine.generate(df_train)
             except Exception as e:
-                logger.warning("第 {} 期推荐失败: {}", test_idx, e)
-                continue
+                logger.warning("第 {} 期规则推荐失败: {}", test_idx, e)
+                rec = None
 
-            for s in rec.strategies:
-                if s.strategy_name not in stats:
-                    stats[s.strategy_name] = {
-                        "total_bets": 0,
-                        "total_cost": 0.0,
-                        "total_reward": 0.0,
-                        "match_sum": 0.0,
-                        "blue_match": 0,
-                        "prize_counts": {j: 0 for j in range(1, 7)},
-                    }
+            if rec:
+                for s in rec.strategies:
+                    self._record_strategy(stats, s.strategy_name, s.red_balls, s.blue_ball, actual_reds, actual_blue)
 
-                st = stats[s.strategy_name]
-                st["total_bets"] += 1
-                st["total_cost"] += self.bet_cost
-
-                # 计算命中
-                pred_set = set(s.red_balls)
-                actual_set = set(actual_reds)
-                match_count = len(pred_set & actual_set)
-                st["match_sum"] += match_count
-
-                # 蓝球命中
-                blue_match = (s.blue_ball == actual_blue)
-                if blue_match:
-                    st["blue_match"] += 1
-
-                # 奖级
-                prize_level = calculate_prize(match_count, blue_match)
-                if prize_level is not None:
-                    st["prize_counts"][prize_level] += 1
-                    st["total_reward"] += get_prize_money(prize_level)
+            # ML 模型推荐
+            if include_ml:
+                for method in ml_methods:
+                    ml_name = f"ML_{method}"
+                try:
+                    pipeline = UnifiedPipeline(self.config.code, method=method)
+                    pipeline.train(df_train)
+                    pred = pipeline.predict(df_train)
+                    self._record_strategy(stats, ml_name, pred.red_balls, pred.blue_ball, actual_reds, actual_blue)
+                except Exception as e:
+                    logger.warning("第 {} 期 {} 失败: {}", test_idx, ml_name, e)
+                    continue
 
         # 计算汇总
         performances = {}
@@ -174,21 +162,52 @@ class StrategyBacktestEngine:
 
         return report
 
+    def _record_strategy(self, stats, name, red_balls, blue_ball, actual_reds, actual_blue):
+        if name not in stats:
+            stats[name] = {
+                "total_bets": 0,
+                "total_cost": 0.0,
+                "total_reward": 0.0,
+                "match_sum": 0.0,
+                "blue_match": 0,
+                "prize_counts": {j: 0 for j in range(1, 7)},
+            }
+
+        st = stats[name]
+        st["total_bets"] += 1
+        st["total_cost"] += self.bet_cost
+
+        pred_set = set(red_balls)
+        actual_set = set(actual_reds)
+        match_count = len(pred_set & actual_set)
+        st["match_sum"] += match_count
+
+        blue_match = (blue_ball == actual_blue)
+        if blue_match:
+            st["blue_match"] += 1
+
+        prize_level = calculate_prize(match_count, blue_match)
+        if prize_level is not None:
+            st["prize_counts"][prize_level] += 1
+            st["total_reward"] += get_prize_money(prize_level)
+
 
 def generate_ranking_report(
     code: str = "ssq",
     window_size: int = 200,
     n_backtest: Optional[int] = None,
     df: Optional[pd.DataFrame] = None,
+    include_ml: bool = True,
 ) -> RankingReport:
     """
-    ��ݺ��������ɲ������а�
+    基于历史数据生成策略排行榜（含规则策略 + ML 模型）。
 
     Args:
-        code: 彩Ĳ
-        window_size:，回测窗口
+        code: 彩种
+        window_size: 回测训练窗口
         n_backtest: 回测期数
         df: 历史数据 DataFrame，若为 None 则从本地加载
+        include_ml: 是否包含 ML 模型回测
 
     Returns:
         RankingReport
@@ -199,7 +218,7 @@ def generate_ranking_report(
         df = load_history(code)
     config = get_lottery_config(code)
     engine = StrategyBacktestEngine(config, window_size=window_size)
-    return engine.run(df, n_backtest)
+    return engine.run(df, n_backtest, include_ml=include_ml)
 
 
 __all__ = [

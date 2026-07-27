@@ -74,7 +74,7 @@ def run_e2e_test(code: str = "ssq", window_size: int = 20):
 
     # LSTM
     logger.info("训练 LSTM...")
-    lstm = LSTMPredictor(cfg, lstm_units=[32, 16], dropout=0.3,
+    lstm = LSTMPredictor(cfg, hidden_units=[32, 16], dropout=0.3,
                          learning_rate=0.001, batch_size=8, epochs=20)
     lstm.train(X, y)
 

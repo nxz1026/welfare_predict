@@ -24,7 +24,6 @@ services:
       # 数据持久化 — 数据保存在项目目录的 data/ 下
       - ./data:/app/data
       - ./model:/app/model
-      - ./users:/app/users
     environment:
       # 必须通过 .env 文件注入，请复制 .env.example 为 .env 并填写实际值
       - LOTTERY_USER=${LOTTERY_USER:-admin}

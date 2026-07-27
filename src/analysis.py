@@ -67,14 +67,14 @@ def generate_frequency_report(df: pd.DataFrame, config: LotteryModelConfig) -> s
     
     for rank, (num, count) in enumerate(sorted_nums[:10], 1):
         deviation = (count - expected_freq) / expected_freq * 100
-        num_type = "🔥热号" if deviation > 20 else ("❄️冷号" if deviation < -20 else "➖常温")
+        num_type = "热号" if deviation > 20 else ("冷号" if deviation < -20 else "常温")
         lines.append(f"{rank:<6} {num:<8} {count:<10} {deviation:>+6.1f}%    {num_type}")
     
     lines.append("-" * 50)
     lines.append("后 10 名（冷号）:")
     for rank, (num, count) in enumerate(sorted_nums[-10:], len(sorted_nums) - 9):
         deviation = (count - expected_freq) / expected_freq * 100
-        lines.append(f"{rank:<6} {num:<8} {count:<10} {deviation:>+6.1f}%    ❄️")
+        lines.append(f"{rank:<6} {num:<8} {count:<10} {deviation:>+6.1f}%    冷号")
     
     lines.append("=" * 50)
     return "\n".join(lines)

@@ -128,6 +128,16 @@
             cursor: pointer;
         }
         .refresh-btn:active { transform: scale(0.95); }
+        .num-input {
+            width: 48px; height: 48px; border-radius: 50%;
+            border: 2px solid #ddd; text-align: center;
+            font-size: 18px; font-weight: bold; outline: none;
+            transition: border-color 0.2s;
+        }
+        .num-input:focus { border-color: #667eea; }
+        .red-input:focus { border-color: #e74c3c; }
+        .blue-input:focus { border-color: #3498db; }
+        .num-input.error { border-color: #e74c3c; background: #fff5f5; }
     </style>
 </head>
 <body>
@@ -141,7 +151,8 @@
 
     <div class="tabs">
         <div class="tab active" onclick="switchTab('recommend')">今日推荐</div>
-        <div class="tab" onclick="switchTab('ml-predict')">ML 预测</div>
+        <div class="tab" onclick="switchTab('ml-predict')">AI 预测</div>
+        <div class="tab" onclick="switchTab('custom')">自选AI推荐</div>
         <div class="tab" onclick="switchTab('history')">历史数据</div>
         <div class="tab" onclick="switchTab('stats')">统计分析</div>
         <div class="tab" onclick="switchTab('ranking')">策略排行</div>
@@ -164,11 +175,64 @@
                     <option value="stacking">Stacking 集成</option>
                 </select>
                 <button onclick="loadMlPredict()" style="margin-left:8px;padding:6px 16px;background:#667eea;color:white;border:none;border-radius:6px;cursor:pointer;">运行预测</button>
+                <button onclick="trainModel()" style="margin-left:8px;padding:6px 16px;background:#2ecc71;color:white;border:none;border-radius:6px;cursor:pointer;">执行训练</button>
+                <button onclick="updateData()" style="margin-left:8px;padding:6px 16px;background:#f39c12;color:white;border:none;border-radius:6px;cursor:pointer;">更新数据</button>
+                <span id="train-status" style="margin-left:12px;font-size:13px;color:#999;"></span>
             </div>
             <div class="grid" id="ml-grid"></div>
             <div class="chart-box" id="ml-proba-chart-box" style="display:none;">
-                <div id="ml-proba-chart" class="chart"></div>
+                <div style="display:flex;gap:16px;flex-wrap:wrap;">
+                    <div style="flex:1;min-width:250px;">
+                        <div id="ml-proba-chart" class="chart" style="height:300px;"></div>
+                    </div>
+                    <div id="ml-number-detail" style="flex:1;min-width:200px;padding:16px;background:#f8f9fa;border-radius:8px;display:none;">
+                        <div style="font-weight:600;margin-bottom:8px;">号码详情</div>
+                        <div id="ml-number-detail-content"></div>
+                    </div>
+                </div>
             </div>
+        </div>
+
+        <!-- 自选AI推荐面板 -->
+        <div class="panel" id="panel-custom">
+            <div style="margin-bottom:16px;">
+                <label style="font-weight:600;margin-right:8px;">推荐策略：</label>
+                <select id="custom-strategy">
+                    <optgroup label="规则策略">
+                        <option value="热号追踪">热号追踪</option>
+                        <option value="冷门博击">冷门博击</option>
+                        <option value="和值精选">和值精选</option>
+                        <option value="幸运号码">幸运号码</option>
+                    </optgroup>
+                    <optgroup label="AI 模型">
+                        <option value="XGBoost ML">XGBoost ML</option>
+                        <option value="LSTM ML">LSTM ML</option>
+                        <option value="Poisson ML">Poisson 先验 ML</option>
+                        <option value="Stacking ML">Stacking 集成 ML</option>
+                    </optgroup>
+                </select>
+            </div>
+            <div class="card" style="margin-bottom:16px;">
+                <div style="font-weight:600;margin-bottom:12px;">自选号码（留空则由 AI 推荐）</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+                    <span style="font-size:13px;color:#e74c3c;font-weight:600;">红球:</span>
+                    <input class="num-input red-input" id="r1" maxlength="2" placeholder="01">
+                    <input class="num-input red-input" id="r2" maxlength="2" placeholder="02">
+                    <input class="num-input red-input" id="r3" maxlength="2" placeholder="03">
+                    <input class="num-input red-input" id="r4" maxlength="2" placeholder="04">
+                    <input class="num-input red-input" id="r5" maxlength="2" placeholder="05">
+                    <input class="num-input red-input" id="r6" maxlength="2" placeholder="06">
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <span style="font-size:13px;color:#3498db;font-weight:600;">蓝球:</span>
+                    <input class="num-input blue-input" id="b1" maxlength="2" placeholder="07">
+                </div>
+                <div style="margin-top:12px;">
+                    <button onclick="runCustomRecommend()" style="padding:8px 24px;background:linear-gradient(135deg,#667eea,#764ba2);color:white;border:none;border-radius:8px;font-size:14px;cursor:pointer;">提交验证</button>
+                    <span id="custom-status" style="margin-left:12px;font-size:13px;color:#999;"></span>
+                </div>
+            </div>
+            <div class="grid" id="custom-grid"></div>
         </div>
 
         <!-- 历史面板 -->
@@ -181,8 +245,17 @@
 
         <!-- 统计面板 -->
         <div class="panel" id="panel-stats">
-            <div class="chart-box"><div id="hot-chart" class="chart"></div></div>
-            <div class="chart-box"><div id="skip-chart" class="chart"></div></div>
+            <div class="chart-box">
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:0 0 8px 0;">
+                    <div style="font-weight:600;font-size:15px;">近30期热号统计</div>
+                    <div style="display:flex;gap:8px;font-size:12px;color:#999;">
+                        <span style="color:#3498db;">冷</span>
+                        <span style="color:#e74c3c;">热</span>
+                    </div>
+                </div>
+                <div id="hot-chart" style="width:100%;height:220px;"></div>
+            </div>
+            <div class="chart-box"><div id="skip-chart" style="width:100%;height:300px;"></div></div>
         </div>
 
         <!-- 排行面板 -->
@@ -266,53 +339,150 @@
 
         // 统计图表
         async function loadStats() {
-            const res = await fetch(`/api/stats/${currentCode}`);
+            const res = await fetch(`/api/stats/${currentCode}?periods=7`);
             const data = await res.json();
 
-            // 热冷号图
+            // 热冷号 → 彩球热力图 (6x6 网格)
+            if (!charts.hot) charts.hot = echarts.init(document.getElementById('hot-chart'));
+            const hot = data.hot_values;
+            const minHot = Math.min(...hot), maxHot = Math.max(...hot);
+            const cols = 6;
+            const heatmapData = [];
+            for (let i = 0; i < 33; i++) {
+                const row = Math.floor(i / cols);
+                const col = i % cols;
+                heatmapData.push([col, row, hot[i], i + 1]);
+            }
             if (!charts.hot) charts.hot = echarts.init(document.getElementById('hot-chart'));
             charts.hot.setOption({
-                title: { text: '近30期热号统计', left: 'center' },
-                tooltip: { trigger: 'axis' },
-                xAxis: { type: 'category', data: data.numbers },
-                yAxis: { type: 'value' },
+                grid: { left: 15, right: 15, top: 5, bottom: 15 },
+                xAxis: { type: 'category', data: ['一','二','三','四','五','六'], splitArea: { show: true } },
+                yAxis: { type: 'category', data: ['第1排','第2排','第3排','第4排','第5排','第6排'], splitArea: { show: true }, show: false },
+                visualMap: {
+                    min: minHot, max: maxHot,
+                    calculable: true,
+                    orient: 'horizontal',
+                    left: 'center', bottom: 0,
+                    inRange: { color: ['#dbeafe','#93c5fd','#3b82f6','#1d4ed8','#1e3a5f'] },
+                    text: ['低', '高'],
+                    textStyle: { fontSize: 11 },
+                },
                 series: [{
-                    type: 'bar',
-                    data: data.hot_values,
-                    itemStyle: { color: '#e74c3c' },
+                    type: 'heatmap',
+                    data: heatmapData.map(d => [d[0], d[1], d[2]]),
+                    label: {
+                        show: true,
+                        formatter: p => {
+                            const num = heatmapData.find(d => d[0] === p.data[0] && d[1] === p.data[1]);
+                            return num ? num[3] : '';
+                        },
+                        fontSize: 15,
+                        fontWeight: 'bold',
+                        color: '#1e293b',
+                    },
+                    emphasis: {
+                        itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.3)' },
+                    },
+                    itemStyle: { borderColor: '#fff', borderWidth: 2, borderRadius: 4 },
                 }],
+                tooltip: {
+                    formatter: p => {
+                        const num = heatmapData.find(d => d[0] === p.data[0] && d[1] === p.data[1]);
+                        return num ? `#${num[3]}<br/>近7期出现: ${num[2]} 次` : '';
+                    }
+                }
             });
 
-            // 遗漏图
+            // 遗漏值 → Lollipop 图
             if (!charts.skip) charts.skip = echarts.init(document.getElementById('skip-chart'));
+            const skip = data.skip_values;
+            const maxSkip = Math.max(...skip);
             charts.skip.setOption({
                 title: { text: '遗漏值统计', left: 'center' },
-                tooltip: { trigger: 'axis' },
-                xAxis: { type: 'category', data: data.numbers },
-                yAxis: { type: 'value' },
-                series: [{
-                    type: 'bar',
-                    data: data.skip_values,
-                    itemStyle: { color: '#3498db' },
-                }],
+                tooltip: {
+                    trigger: 'axis',
+                    formatter: p => {
+                        const item = p[0];
+                        return `#${item.name}<br/>遗漏: ${item.value} 期`;
+                    }
+                },
+                grid: { left: 50, right: 20, top: 40, bottom: 30 },
+                xAxis: {
+                    type: 'category',
+                    data: data.numbers,
+                    axisLabel: { fontSize: 11, interval: 0, rotate: 0 },
+                    splitLine: { show: false },
+                },
+                yAxis: {
+                    type: 'value',
+                    max: maxSkip + 2,
+                    splitLine: { lineStyle: { type: 'dashed', color: '#eee' } },
+                },
+                series: [
+                    // 茎——细线
+                    {
+                        type: 'bar',
+                        barWidth: 2,
+                        data: skip.map((v, i) => ({
+                            value: v,
+                            itemStyle: { color: i % 2 === 0 ? '#3498db' : '#2ecc71' }
+                        })),
+                        z: 1,
+                    },
+                    // 顶端圆点
+                    {
+                        type: 'scatter',
+                        data: skip.map((v, i) => ({
+                            value: [i, v],
+                            symbol: 'circle',
+                            symbolSize: v === 0 ? 12 : 8,
+                            itemStyle: {
+                                color: v === 0 ? '#e74c3c' : (i % 2 === 0 ? '#3498db' : '#2ecc71'),
+                                borderColor: '#fff',
+                                borderWidth: 1,
+                            },
+                        })),
+                        z: 2,
+                        label: {
+                            show: true,
+                            position: 'top',
+                            fontSize: 10,
+                            formatter: p => p.data.value[1] === 0 ? '● 新出' : '',
+                            color: '#e74c3c',
+                        }
+                    }
+                ]
             });
         }
 
         // 排行
         async function loadRanking() {
-            const res = await fetch(`/api/ranking/${currentCode}?window=200&backtest=50`);
+            const res = await fetch(`/api/ranking/${currentCode}?window=20&backtest=10`);
             const data = await res.json();
 
-            const names = Object.keys(data.performances);
-            const avgMatches = names.map(n => data.performances[n].avg_match);
-            const rois = names.map(n => (data.performances[n].roi * 100).toFixed(1));
+            const nameMap = {
+                'conservative': '热号追踪', 'aggressive': '冷门博击', 'balanced': '和值精选', 'mystic': '幸运号码',
+                'ML_xgb': 'XGBoost ML', 'ML_lstm': 'LSTM ML', 'ML_poisson': 'Poisson ML', 'ML_stacking': 'Stacking ML',
+            };
+            const rawNames = Object.keys(data.performances);
+            if (rawNames.length === 0) {
+                document.getElementById('ranking-chart').innerHTML = '<div style="text-align:center;padding:60px;color:#999;">数据不足，需至少 21 期历史数据才能生成排行</div>';
+                return;
+            }
+            const names = rawNames.map(n => nameMap[n] || n);
+            const avgMatches = rawNames.map(n => data.performances[n].avg_match);
+            const rois = rawNames.map(n => (data.performances[n].roi * 100).toFixed(1));
+
+            // 颜色映射：规则用绿色系，ML用蓝色系
+            const ruleColors = ['#2ecc71', '#27ae60', '#1abc9c', '#16a085'];
+            const mlColors = ['#3498db', '#2980b9', '#9b59b6', '#8e44ad'];
 
             if (!charts.ranking) charts.ranking = echarts.init(document.getElementById('ranking-chart'));
             charts.ranking.setOption({
-                title: { text: '策略排行 (50期回测)', left: 'center' },
+                title: { text: '策略排行 (10期回测)', left: 'center' },
                 tooltip: { trigger: 'axis' },
                 legend: { bottom: 0 },
-                xAxis: { type: 'category', data: names },
+                xAxis: { type: 'category', data: names, axisLabel: { rotate: 20, fontSize: 11 } },
                 yAxis: [
                     { type: 'value', name: '平均命中' },
                     { type: 'value', name: 'ROI (%)' },
@@ -322,7 +492,12 @@
                         name: '平均命中红球',
                         type: 'bar',
                         data: avgMatches,
-                        itemStyle: { color: '#2ecc71' },
+                        itemStyle: {
+                            color: p => {
+                                const idx = p.dataIndex;
+                                return idx < 4 ? ruleColors[idx] : mlColors[idx - 4];
+                            }
+                        },
                     },
                     {
                         name: 'ROI (%)',
@@ -330,16 +505,19 @@
                         yAxisIndex: 1,
                         data: rois,
                         itemStyle: { color: '#e67e22' },
+                        label: { show: true, position: 'top', formatter: p => p.value + '%', fontSize: 10 },
                     },
                 ],
             });
         }
 
-        // ML预测
+        // ML预测 - AI预测
         async function loadMlPredict() {
             const method = document.getElementById('ml-method').value;
             const grid = document.getElementById('ml-grid');
-            grid.innerHTML = '<div class="card" style="text-align:center;padding:40px;">正在运行 ML 预测...</div>';
+            grid.innerHTML = '<div class="card" style="text-align:center;padding:40px;">正在运行 AI 预测...</div>';
+            document.getElementById('ml-proba-chart-box').style.display = 'none';
+            document.getElementById('ml-number-detail').style.display = 'none';
             const methodLabel = {'xgb': 'XGBoost', 'lstm': 'LSTM', 'poisson': 'Poisson 先验', 'stacking': 'Stacking 集成'};
             try {
                 const res = await fetch(`/api/predict/${currentCode}?method=${method}`);
@@ -348,9 +526,6 @@
                     throw new Error(err.detail || `HTTP ${res.status}`);
                 }
                 const data = await res.json();
-                const probaHtml = data.probabilities
-                    ? `<div class="card-meta" style="margin-top:8px;">概率最高: #${data.probabilities.indexOf(Math.max(...data.probabilities)) + 1}</div>`
-                    : '';
                 grid.innerHTML = `
                     <div class="card">
                         <div class="card-title">${methodLabel[method] || method} 预测结果</div>
@@ -359,27 +534,56 @@
                             ${data.blue_ball ? `<span class="ball blue">${data.blue_ball}</span>` : ''}
                         </div>
                         <div class="card-meta">方法: ${data.method} | 策略: ${data.strategy}</div>
-                        ${probaHtml}
                     </div>`;
 
-                // 概率分布图
+                // 概率饼图 (Top 3)
                 if (data.probabilities && data.probabilities.length > 0) {
                     document.getElementById('ml-proba-chart-box').style.display = 'block';
-                    const topProba = data.probabilities
+                    const allProbas = data.probabilities
                         .map((p, i) => ({num: i + 1, prob: p}))
-                        .sort((a, b) => b.prob - a.prob)
-                        .slice(0, 15);
-                    if (!charts.mlProba) charts.mlProba = echarts.init(document.getElementById('ml-proba-chart'));
+                        .sort((a, b) => b.prob - a.prob);
+                    const top3 = allProbas.slice(0, 3);
+                    const otherProb = allProbas.slice(3).reduce((s, x) => s + x.prob, 0);
+
+                    // 保存全量概率数据供点击查看
+                    window._mlAllProbas = allProbas;
+
+                    if (!charts.mlProba) {
+                        charts.mlProba = echarts.init(document.getElementById('ml-proba-chart'));
+                        charts.mlProba.on('click', function(params) {
+                            const num = params.data.num;
+                            showNumberDetail(num);
+                        });
+                    }
                     charts.mlProba.setOption({
-                        title: { text: '号码命中概率 TOP 15', left: 'center' },
-                        tooltip: { trigger: 'axis' },
-                        xAxis: { type: 'category', data: topProba.map(x => x.num) },
-                        yAxis: { type: 'value', name: '概率' },
+                        title: { text: '号码命中概率 TOP 3', left: 'center' },
+                        tooltip: { trigger: 'item', formatter: '{b}: {d}%' },
                         series: [{
-                            type: 'bar',
-                            data: topProba.map(x => parseFloat(x.prob.toFixed(4))),
-                            itemStyle: { color: '#667eea', emphasis: { color: '#764ba2' } },
-                            label: { show: true, position: 'top', formatter: v => (v * 100).toFixed(1) + '%' }
+                            type: 'pie',
+                            radius: ['40%', '70%'],
+                            center: ['50%', '55%'],
+                            data: [
+                                ...top3.map(x => ({
+                                    value: parseFloat(x.prob.toFixed(4)),
+                                    name: '#' + x.num,
+                                    num: x.num,
+                                    prob: x.prob,
+                                    itemStyle: { color: ['#e74c3c','#f39c12','#2ecc71'][top3.indexOf(x)] }
+                                })),
+                                {
+                                    value: parseFloat(otherProb.toFixed(4)),
+                                    name: '其他',
+                                    num: -1,
+                                    prob: otherProb,
+                                    itemStyle: { color: '#ddd' }
+                                }
+                            ],
+                            label: {
+                                formatter: '{b}\n{d}%'
+                            },
+                            emphasis: {
+                                itemStyle: { shadowBlur: 10, shadowOffsetX: 0, shadowColor: 'rgba(0,0,0,0.3)' }
+                            }
                         }],
                     });
                 }
@@ -387,9 +591,214 @@
                 const msg = e.message || '未知错误';
                 let hint = '';
                 if (msg.includes('404') || msg.includes('未找到') || msg.includes('未训练')) {
-                    hint = '<br>请先在命令行运行模型训练：<br><code style="background:#f0f0f0;padding:2px 6px;border-radius:4px;">python scripts/train.py --name ssq --method xgb</code>';
+                    hint = '<br>请先点击「执行训练」按钮训练模型';
                 }
                 grid.innerHTML = `<div class="card" style="text-align:center;padding:40px;color:#e74c3c;">预测失败: ${msg}${hint}</div>`;
+            }
+        }
+
+        function showNumberDetail(num) {
+            const detail = document.getElementById('ml-number-detail');
+            const content = document.getElementById('ml-number-detail-content');
+            detail.style.display = 'block';
+            const proba = window._mlAllProbas.find(x => x.num === num);
+            if (!proba) {
+                content.innerHTML = '无数据';
+                return;
+            }
+            const pct = (proba.prob * 100).toFixed(2);
+            let color = '#e74c3c';
+            if (proba.prob < 0.05) color = '#f39c12';
+            if (proba.prob < 0.03) color = '#999';
+            content.innerHTML = `
+                <div style="font-size:24px;font-weight:bold;color:${color};margin-bottom:8px;">#${num}</div>
+                <div style="margin-bottom:4px;">命中概率: <strong>${pct}%</strong></div>
+                <div style="font-size:12px;color:#999;">点击饼图其他号码可切换查看</div>
+            `;
+        }
+
+        async function trainModel() {
+            const method = document.getElementById('ml-method').value;
+            const status = document.getElementById('train-status');
+            const methodLabel = {'xgb': 'XGBoost', 'lstm': 'LSTM', 'poisson': 'Poisson 先验', 'stacking': 'Stacking 集成'};
+            status.style.color = '#999';
+            status.textContent = `正在检查训练状态...`;
+            const grid = document.getElementById('ml-grid');
+            try {
+                // 先检查是否已训练
+                const checkRes = await fetch(`/api/train/${currentCode}/status?method=${method}`);
+                const checkData = await checkRes.json();
+                if (checkData.already_trained) {
+                    status.style.color = '#f39c12';
+                    status.textContent = `✅ ${methodLabel[method] || method} 已全量训练 (${checkData.n_samples} 样本, ${checkData.issues_count} 期)，无需重复训练`;
+                    loadMlPredict();
+                    return;
+                }
+
+                status.textContent = `正在训练 ${methodLabel[method] || method}...`;
+                grid.innerHTML = `<div class="card" style="text-align:center;padding:40px;">⏳ 正在训练 ${methodLabel[method] || method} 模型，请稍候...</div>`;
+                const res = await fetch(`/api/train/${currentCode}?method=${method}`, {method: 'POST'});
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+                status.style.color = '#2ecc71';
+                status.textContent = `✅ ${methodLabel[method] || method} 训练完成: ${data.n_samples} 样本, ${data.n_features} 特征 (MSE=${data.metrics.val_mse.toFixed(4)})`;
+                loadMlPredict();
+            } catch (e) {
+                status.style.color = '#e74c3c';
+                status.textContent = `❌ 训练失败: ${e.message}`;
+                grid.innerHTML = `<div class="card" style="text-align:center;padding:40px;color:#e74c3c;">训练失败: ${e.message}</div>`;
+            }
+        }
+
+        async function updateData() {
+            const status = document.getElementById('train-status');
+            status.style.color = '#999';
+            status.textContent = '正在更新数据...';
+            try {
+                const res = await fetch(`/api/data/update/${currentCode}`, {method: 'POST'});
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+                status.style.color = '#2ecc71';
+                if (data.new_issues === 0) {
+                    status.textContent = `数据已是最新 (${data.total_issues} 期)`;
+                } else {
+                    status.textContent = `数据已更新: 新增 ${data.new_issues} 期, 共 ${data.total_issues} 期`;
+                }
+                // 自动运行所有 ML 训练
+                status.textContent += '，正在自动训练模型...';
+                const methods = ['xgb', 'lstm', 'poisson', 'stacking'];
+                for (const m of methods) {
+                    const methodLabel = {'xgb': 'XGBoost', 'lstm': 'LSTM', 'poisson': 'Poisson 先验', 'stacking': 'Stacking 集成'};
+                    status.textContent = `正在训练 ${methodLabel[m]}...`;
+                    const trainRes = await fetch(`/api/train/${currentCode}?method=${m}`, {method: 'POST'});
+                    if (trainRes.ok) {
+                        const td = await trainRes.json();
+                        status.textContent = `${methodLabel[m]} 完成 (MSE=${td.metrics.val_mse.toFixed(4)})`;
+                    }
+                }
+                status.style.color = '#2ecc71';
+                status.textContent += ` ✅ 全部训练完成`;
+                // 刷新推荐和历史
+                refreshAll();
+                loadMlPredict();
+            } catch (e) {
+                status.style.color = '#e74c3c';
+                status.textContent = `❌ 更新失败: ${e.message}`;
+            }
+        }
+
+        // 自选AI推荐
+        function getCustomInputs() {
+            const ids = ['r1','r2','r3','r4','r5','r6'];
+            const reds = [];
+            for (const id of ids) {
+                const el = document.getElementById(id);
+                const v = el.value.trim();
+                if (v) {
+                    const n = parseInt(v, 10);
+                    if (isNaN(n) || n < 1 || n > 33) {
+                        el.classList.add('error');
+                    } else {
+                        el.classList.remove('error');
+                        reds.push(n);
+                    }
+                } else {
+                    el.classList.remove('error');
+                }
+            }
+            const blueEl = document.getElementById('b1');
+            const bv = blueEl.value.trim();
+            let blue = null;
+            if (bv) {
+                const n = parseInt(bv, 10);
+                if (isNaN(n) || n < 1 || n > 16) {
+                    blueEl.classList.add('error');
+                } else {
+                    blueEl.classList.remove('error');
+                    blue = n;
+                }
+            }
+            // 去重验证
+            if (new Set(reds).size !== reds.length) {
+                document.getElementById('custom-status').textContent = '红球不能重复';
+                document.getElementById('custom-status').style.color = '#e74c3c';
+                return null;
+            }
+            return { reds, blue };
+        }
+
+        async function runCustomRecommend() {
+            const status = document.getElementById('custom-status');
+            const grid = document.getElementById('custom-grid');
+            const strategy = document.getElementById('custom-strategy').value;
+            const inputs = getCustomInputs();
+            if (!inputs) return;
+
+            status.textContent = '正在生成推荐...';
+            status.style.color = '#999';
+            grid.innerHTML = '<div class="card" style="text-align:center;padding:40px;">⏳ 加载中...</div>';
+
+            try {
+                const body = {
+                    strategy: strategy,
+                    user_reds: inputs.reds,
+                    user_blue: inputs.blue,
+                };
+                const res = await fetch(`/api/custom-recommend/${currentCode}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+
+                const hasUserNums = data.user_reds && data.user_reds.length > 0;
+                let cards = '';
+
+                // AI 推荐卡片
+                cards += `
+                    <div class="card">
+                        <div class="card-title">${data.display_name} 推荐</div>
+                        <div class="balls">
+                            ${data.recommended_reds.map(b => {
+                                const isLocked = data.locked && data.user_reds && data.user_reds.includes(b);
+                                return `<span class="ball red" style="${isLocked ? 'box-shadow:0 0 0 2px #f39c12;' : ''}">${b}</span>`;
+                            }).join('')}
+                            ${data.recommended_blue ? `<span class="ball blue">${data.recommended_blue}</span>` : ''}
+                        </div>
+                        <div class="card-meta" style="white-space:pre-wrap;line-height:1.6;">
+                            ${data.locked ? `<span style="color:#f39c12;">🔒 已锁定 ${data.locked} 个红球</span><br>` : ''}
+                            ${data.reason}
+                        </div>
+                    </div>`;
+
+                if (hasUserNums) {
+                    cards += `
+                        <div class="card">
+                            <div class="card-title">你的选择</div>
+                            <div class="balls">
+                                ${data.user_reds.map(b => {
+                                    const isMatch = data.match_numbers && data.match_numbers.includes(b);
+                                    return `<span class="ball red" style="${isMatch ? 'box-shadow:0 0 0 3px #2ecc71;' : 'opacity:0.5;'}">${b}</span>`;
+                                }).join('')}
+                                ${data.user_blue ? `<span class="ball blue">${data.user_blue}</span>` : ''}
+                            </div>
+                            ${data.match_count !== undefined ? `
+                                <div class="card-meta" style="color:${data.match_count >= 3 ? '#2ecc71' : (data.match_count >= 1 ? '#f39c12' : '#e74c3c')};font-weight:600;">
+                                    AI 推荐命中您选择的: ${data.match_count}/${data.user_reds.length}
+                                    ${data.match_numbers && data.match_numbers.length > 0 ? ` | ${data.match_numbers.join(', ')}` : ''}
+                                </div>
+                            ` : ''}
+                        </div>`;
+                }
+
+                grid.innerHTML = cards;
+                status.textContent = hasUserNums ? `✅ 已完成，锁定 ${data.locked} 个红球` : '✅ 推荐已生成';
+                status.style.color = '#2ecc71';
+            } catch (e) {
+                status.textContent = `❌ ${e.message}`;
+                status.style.color = '#e74c3c';
+                grid.innerHTML = `<div class="card" style="text-align:center;padding:40px;color:#e74c3c;">${e.message}</div>`;
             }
         }
 

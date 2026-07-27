@@ -15,7 +15,6 @@ COPY src/ src/
 COPY config/ config/
 COPY static/ static/
 COPY scripts/ scripts/
-COPY requirements.txt .
 COPY .env.example .env.example 2>/dev/null || true
 COPY Makefile .
 
@@ -24,8 +23,8 @@ RUN mkdir -p data/ssq data/3d data/qlc data/users model output
 
 # 环境变量（必须通过 --build-arg 或 .env 文件注入，禁止硬编码！）
 ARG LOTTERY_USER=admin
-ARG LOTTERY_PASS=${LOTTERY_PASS:?LOTTERY_PASS must be set via --build-arg}
-ARG LOTTERY_SECRET=${LOTTERY_SECRET:-auto-generated-default}
+ARG LOTTERY_PASS  # 必须通过 --build-arg 设置，无默认值
+ARG LOTTERY_SECRET=auto-generated-default
 
 ENV LOTTERY_USER=$LOTTERY_USER
 ENV LOTTERY_PASS=$LOTTERY_PASS

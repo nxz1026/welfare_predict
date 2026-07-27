@@ -1,5 +1,7 @@
 @echo off
 chcp 65001 >nul 2>&1
+
+:restart
 echo ============================================================
 echo   Welfare Predict API Server Startup
 echo ============================================================
@@ -29,10 +31,18 @@ if not exist config mkdir config
 echo.
 echo Starting server...
 echo   URL: http://localhost:%PORT%
-echo   Default login: admin / caipiao2026
+echo   Default login: admin / 12333 (change via .env)
 echo   Press Ctrl+C to stop
 echo ============================================================
 echo.
 
 cd /d "%~dp0"
 python -m uvicorn src.api:app --host 0.0.0.0 --port %PORT%
+
+echo.
+echo ============================================================
+echo   Server stopped. Restarting in 3 seconds...
+echo   Press Ctrl+C twice to exit completely
+echo ============================================================
+timeout /t 3 /nobreak >nul
+goto restart

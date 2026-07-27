@@ -182,7 +182,7 @@ def generate_ticket_text(
     return "\n".join(lines)
 
 
-def generate_missing_report(
+def generate_missing_alert(
     df: pd.DataFrame,
     config: LotteryModelConfig,
     top_n: int = 5,
@@ -264,6 +264,6 @@ __all__ = [
     "plot_hot_cold_vs_random",
     "plot_sum_distribution",
     "generate_ticket_text",
-    "generate_missing_report",
+    "generate_missing_alert",
     "generate_strategy_ranking_text",
 ]

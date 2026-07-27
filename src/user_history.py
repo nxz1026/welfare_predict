@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -23,11 +24,19 @@ from loguru import logger
 class UserHistory:
     """
     单用户历史记录。
+    使用文件锁保证并发安全。
     """
+
+    _locks: Dict[str, threading.Lock] = {}  # per-user locks
+    _global_lock = threading.Lock()
 
     def __init__(self, user_id: str, storage_dir: str = "data/users"):
         self.user_id = user_id
         self.storage_path = Path(storage_dir) / f"{user_id}.json"
+        with self._global_lock:
+            if user_id not in self._locks:
+                self._locks[user_id] = threading.Lock()
+        self._lock = self._locks[user_id]
         self.data: Dict = self._load()
 
     def _load(self) -> Dict:
@@ -37,17 +46,18 @@ class UserHistory:
         return {
             "user_id": self.user_id,
             "created_at": datetime.now().isoformat(),
-            "frequently_bought": {},  # "06": 12 (购买次数)
-            "recommendations": [],    # 推荐历史
-            "wins": [],               # 中奖记录
+            "frequently_bought": {},
+            "recommendations": [],
+            "wins": [],
             "total_spent": 0.0,
             "total_won": 0.0,
         }
 
     def _save(self):
-        self.storage_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.storage_path, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, ensure_ascii=False, indent=2)
+        with self._lock:
+            self.storage_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.storage_path, "w", encoding="utf-8") as f:
+                json.dump(self.data, f, ensure_ascii=False, indent=2)
 
     def record_purchase(self, numbers: Dict[str, List[int]], cost: float = 2.0):
         """

@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -41,6 +41,7 @@ class UnifiedTrainingSummary:
     features_names: List[str]
     timestamp: str
     metrics: Dict[str, float]
+    trained_issues: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -151,6 +152,9 @@ class UnifiedPipeline:
 
         self.is_trained = True
 
+        # 记录训练用的期号
+        trained_issues = df["期数"].astype(str).iloc[:split_idx].tolist() if "期数" in df.columns else []
+
         summary = UnifiedTrainingSummary(
             code=self.code,
             name=self.config.name,
@@ -160,6 +164,7 @@ class UnifiedPipeline:
             features_names=self.feature_names,
             timestamp=datetime.utcnow().isoformat(),
             metrics=metrics,
+            trained_issues=trained_issues,
         )
 
         # 保存
@@ -179,8 +184,6 @@ class UnifiedPipeline:
         3. 用 meta-features 训练元学习器（逻辑回归）
         4. 组合为 StackingEnsemble 对象
         """
-        from sklearn.linear_model import LogisticRegression
-
         logger.info("=== 开始 Stacking 训练 ===")
 
         # 1. 训练基学习器
@@ -202,9 +205,11 @@ class UnifiedPipeline:
         # 拼接 meta-features: (n_val, num_classes * 3)
         meta_X = np.concatenate([xgb_proba, lstm_proba, poisson_proba], axis=1)
 
-        # 3. 训练元学习器
-        meta_learner = LogisticRegression(max_iter=1000, C=1.0)
-        # 对每个号码分别训练二分类器（one-vs-rest 的简化版）
+        # 3. 训练元学习器（one-vs-rest 多标签分类）
+        from sklearn.multiclass import OneVsRestClassifier
+        from sklearn.linear_model import LogisticRegression as LR
+        base_lr = LR(max_iter=1000, C=1.0)
+        meta_learner = OneVsRestClassifier(base_lr)
         meta_learner.fit(meta_X, y_val)
 
         # 4. 封装为 StackingEnsemble

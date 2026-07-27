@@ -84,7 +84,11 @@ class LotteryHttpClient:
 
 def _build_history_url(config: LotteryModelConfig, start: Optional[int], end: Optional[int]) -> str:
     base = f"https://datachart.500.com/{config.code}/history/"
-    if config.code in {"qxc", "pls", "sd", "ssq", "dlt"}:
+
+    # .shtml 页面返回近 30 期；.php 仅返回 1 期（500.com 限制），故 SSQ/DLT 改用 .shtml
+    if config.code in {"ssq", "dlt", "qlc"}:
+        path = "history.shtml"
+    elif config.code in {"qxc", "pls", "sd"}:
         path = "inc/history.php"
     else:
         path = "history.shtml"
@@ -125,11 +129,16 @@ def _parse_issue_list(config: LotteryModelConfig, html: str) -> pd.DataFrame:
             for idx in range(config.red.sequence_len):
                 record[f"红球_{idx + 1}"] = tds[idx + 1].get_text(strip=True)
             record["蓝球_1"] = tds[7].get_text(strip=True)
+            # 开奖日期在最后一列 (td[15])
+            if len(tds) > 15:
+                record["开奖日期"] = tds[15].get_text(strip=True)
         elif config.code == "dlt":
             for idx in range(config.red.sequence_len):
                 record[f"红球_{idx + 1}"] = tds[idx + 1].get_text(strip=True)
             for idx in range(config.blue.sequence_len):
                 record[f"蓝球_{idx + 1}"] = tds[6 + idx].get_text(strip=True)
+            if len(tds) > 14:
+                record["开奖日期"] = tds[14].get_text(strip=True)
         elif config.code in {"pls", "sd", "qxc"}:
             digits = tds[1].get_text(strip=True).split(" ")
             for idx, value in enumerate(digits):
@@ -137,7 +146,6 @@ def _parse_issue_list(config: LotteryModelConfig, html: str) -> pd.DataFrame:
         elif config.code == "qlc":
             for idx in range(config.red.sequence_len):
                 record[f"红球_{idx + 1}"] = tds[idx + 1].get_text(strip=True)
-        # NOTE: kl8 已迁移至独立项目 (2025-10)，此处不再处理
         rows.append(record)
 
     if not rows:

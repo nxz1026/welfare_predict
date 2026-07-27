@@ -30,8 +30,8 @@ class LSTMPredictor:
     """
     MLP/DNN 基学习器（单模型多输出）。
 
-    注意：虽然类名仍为 LSTMPredictor 以保持 API 兼容，
-    但内部架构已从 LSTM 重构为 MLP，因为输入是高维统计特征而非时序序列。
+    注意：类名因 API 兼容保留为 LSTMPredictor，但内部架构已从 LSTM 重构为 MLP。
+    建议新代码使用 LSTMPredictor 时理解其为 MLP 实现。如需 LSTM，请使用 modeling.build_sequence_model()。
     """
 
     def __init__(

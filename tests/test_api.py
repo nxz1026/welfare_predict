@@ -23,7 +23,7 @@ async def client():
 @pytest_asyncio.fixture
 async def auth_headers(client):
     """辅助 fixture：获取认证后的 headers。"""
-    resp = await client.post("/api/login", json={"username": "admin", "password": "admin"})
+    resp = await client.post("/api/login", json={"username": "admin", "password": "12333"})
     assert resp.status_code == 200
     token = resp.cookies.get("lottery_session")
     return {"Cookie": f"lottery_session={token}"}
@@ -51,7 +51,7 @@ class TestHealthCheck:
 
 class TestAuth:
     async def test_login_success(self, client):
-        resp = await client.post("/api/login", json={"username": "admin", "password": "admin"})
+        resp = await client.post("/api/login", json={"username": "admin", "password": "12333"})
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
@@ -109,7 +109,7 @@ class TestAuthorization:
         resp = await client.get("/api/ranking/ssq")
         assert resp.status_code == 401
 
-    async def test_authorized_can_access_recommend(self, client, auth_headers):
+    async def test_authorized_can_access_recommend(self, client, auth_headers, sample_ssq_csv):
         resp = await client.get("/api/recommend/ssq", cookies=auth_headers)
         assert resp.status_code == 200
 
@@ -129,21 +129,21 @@ class TestBusinessAPIs:
         resp = await client.get("/api/predict/ssq?method=xgb", cookies=auth_headers)
         assert resp.status_code == 404
 
-    async def test_history_limit_validation(self, client, auth_headers):
+    async def test_history_limit_validation(self, client, auth_headers, sample_ssq_csv):
         """参数边界校验：limit 应在 [1, 200] 范围内。"""
         # 合法值
         resp = await client.get("/api/history/ssq?limit=30", cookies=auth_headers)
-        assert resp.status_code in (200, 500)  # 可能因缺少数据返回 500
+        assert resp.status_code == 200
 
-    async def test_ranking_params_validation(self, client, auth_headers):
+    async def test_ranking_params_validation(self, client, auth_headers, sample_ssq_csv):
         """ranking 参数边界校验。"""
         resp = await client.get(
             "/api/ranking/ssq?window=100&backtest=20",
             cookies=auth_headers,
         )
-        assert resp.status_code in (200, 404, 500)
+        assert resp.status_code == 200
 
-    async def test_recommend_response_format(self, client, auth_headers):
+    async def test_recommend_response_format(self, client, auth_headers, sample_ssq_csv):
         """推荐接口响应格式验证。"""
         resp = await client.get("/api/recommend/ssq", cookies=auth_headers)
         if resp.status_code == 200:

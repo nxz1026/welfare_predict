@@ -1,13 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Stacking 元学习器。
+Stacking 元学习器（已弃用，由 unified_pipeline.py 内的 StackingEnsemble 替代）。
 
-使用 Logistic Regression 作为元学习器，学习基学习器的权重。
-输入：XGBoost + LSTM + 泊松先验 的输出概率拼接
-输出：最终每个号码的概率
-
-ponytail: 用 LR 而非复杂 NN 做 stacking。
-升级路径：如果 LR 表现不佳，可尝试浅层 NN 或 Bayesian model combination。
+此模块保留以兼容旧测试/导入，新代码请使用 UnifiedPipeline(method='stacking')。
 """
 
 from __future__ import annotations

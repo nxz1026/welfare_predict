@@ -151,11 +151,5 @@ data/sessions.db
 # 环境变量模板（P4-05 新增）
 .env.example
 
-# 统一序列化模块（P1-04 新增）
-src/model_io.py
-
-# 会话管理模块（P0-02 新增）
-src/session.py
-
 # TODO 文件
 TODO.md

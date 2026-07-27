@@ -35,6 +35,7 @@ class StrategyResult:
     blue_ball: Optional[int]  # 蓝球 (1-based)
     analysis: Dict[str, Any]  # 分析摘要（P2-03: any → Any）
     confidence_note: str  # 置信度说明
+    display_name: str = ""
 
 
 @dataclass
@@ -106,6 +107,7 @@ class ConservativeStrategy:
                 "avg_sum": int(analysis.get("avg_sum", 0)),
             },
             confidence_note="基于近 30 期热号统计",
+            display_name="热号追踪",
         )
 
 
@@ -135,7 +137,7 @@ class AggressiveStrategy:
             valid = counts[(counts.index >= 1) & (counts.index <= self.config.blue.num_classes)]
             if len(valid) > 0:
                 # 选择频率最低的（即遗漏最大的）
-                return valid.idxmin()
+                return int(valid.idxmin())
         return random.randint(1, self.config.blue.num_classes)
 
     def generate(
@@ -162,6 +164,7 @@ class AggressiveStrategy:
                 "target_numbers": sorted([int(i+1) for i in np.argsort(skip.values)[-5:]]),
             },
             confidence_note="基于历史遗漏最大值",
+            display_name="冷门博击",
         )
 
 
@@ -217,6 +220,7 @@ class BalancedStrategy:
                 "odd_even_ratio": f"{sum(1 for x in red_balls if x % 2 == 1)}:{sum(1 for x in red_balls if x % 2 == 0)}",
             },
             confidence_note="基于和值/奇偶均衡",
+            display_name="和值精选",
         )
 
 
@@ -254,8 +258,11 @@ class MysticStrategy:
 
         red_balls = sorted(lucky_part + random_part)
 
-        # 蓝球吉利数字
-        blue_ball = random.choice([6, 8, 9, 16])
+        # 蓝球吉利数字（取配置范围内的值）
+        blue_pool = [b for b in [6, 8, 9, 16] if 1 <= b <= self.config.blue.num_classes]
+        if not blue_pool:
+            blue_pool = [random.randint(1, self.config.blue.num_classes)]
+        blue_ball = random.choice(blue_pool)
 
         return StrategyResult(
             strategy_name=self.name,
@@ -266,6 +273,7 @@ class MysticStrategy:
                 "elements": self._get_elements(),
             },
             confidence_note="基于幸运数字组合",
+            display_name="幸运号码",
         )
 
     def _get_elements(self) -> Dict[str, str]:

@@ -37,7 +37,7 @@ from src.session import create_session as db_create_session, validate_session, d
 # ============================================================
 
 USERNAME = os.getenv("LOTTERY_USER", "admin")
-PASSWORD = os.getenv("LOTTERY_PASS", "change-me-in-production")
+PASSWORD = os.getenv("LOTTERY_PASS", "12333")
 SESSION_COOKIE = "lottery_session"
 SESSION_HOURS = 12
 
@@ -185,7 +185,7 @@ async def api_recommend(request: Request, code: str):
         "total_periods": len(df),
         "strategies": [
             {
-                "name": s.strategy_name,
+                "name": s.display_name or s.strategy_name,
                 "red_balls": s.red_balls,
                 "blue_ball": s.blue_ball,
                 "analysis": s.analysis,
@@ -193,6 +193,218 @@ async def api_recommend(request: Request, code: str):
             for s in rec.strategies
         ],
     }
+
+
+class CustomRecommendRequest(BaseModel):
+    strategy: str = "热号追踪"
+    user_reds: list[int] = []
+    user_blue: Optional[int] = None
+
+
+@app.post("/api/custom-recommend/{code}")
+async def api_custom_recommend(request: Request, code: str, data: CustomRecommendRequest):
+    require_auth(request)
+    if code not in LOTTERY_CONFIGS:
+        raise HTTPException(400, f"未知彩种: {code}")
+
+    from src.recommendation import RecommendationEngine
+    from src.unified_pipeline import UnifiedPipeline
+    from src.feature_engineering import compute_hot_cold_features, compute_skip_features
+    import numpy as np
+
+    config = LOTTERY_CONFIGS[code]
+
+    # 策略映射：规则策略 + ML 策略
+    ml_methods = {
+        "XGBoost ML": "xgb",
+        "LSTM ML": "lstm",
+        "Poisson ML": "poisson",
+        "Stacking ML": "stacking",
+        "xgb": "xgb", "lstm": "lstm", "poisson": "poisson", "stacking": "stacking",
+    }
+    rule_methods = {
+        "热号追踪": "conservative",
+        "冷门博击": "aggressive",
+        "和值精选": "balanced",
+        "幸运号码": "mystic",
+        "conservative": "conservative",
+        "aggressive": "aggressive",
+        "balanced": "balanced",
+        "mystic": "mystic",
+    }
+
+    is_ml = data.strategy in ml_methods
+    is_rule = data.strategy in rule_methods
+    if not is_ml and not is_rule:
+        raise HTTPException(400, f"未知策略: {data.strategy}")
+
+    strategy_display = data.strategy
+
+    # 验证用户号码（允许部分输入）
+    user_reds = data.user_reds
+    user_blue = data.user_blue
+    errors = []
+
+    if user_reds:
+        if len(user_reds) > 6:
+            errors.append("红球最多输入 6 个")
+        elif len(set(user_reds)) != len(user_reds):
+            errors.append("红球不能重复")
+        elif any(r < 1 or r > 33 for r in user_reds):
+            errors.append("红球范围: 1-33")
+        if user_blue is not None and (user_blue < 1 or user_blue > 16):
+            errors.append("蓝球范围: 1-16")
+        if errors:
+            raise HTTPException(400, "；".join(errors))
+
+    df = load_history(code)
+    red_cols = [f"红球_{i+1}" for i in range(config.red.sequence_len)]
+
+    # 生成推荐
+    if is_ml:
+        ml_method = ml_methods[data.strategy]
+        pipeline = UnifiedPipeline(code, method=ml_method)
+        if not hasattr(pipeline, 'is_trained') or not pipeline.is_trained:
+            try:
+                pipeline.train(df)
+            except Exception:
+                raise HTTPException(400, f"{strategy_display} 模型未训练，请先在 AI 预测页面执行训练")
+        pred = pipeline.predict(df)
+        probas = pred.probabilities
+        if probas is not None:
+            probas = np.nan_to_num(probas, nan=0.0, posinf=0.0, neginf=0.0)
+        else:
+            probas = np.ones(config.red.num_classes) / config.red.num_classes
+
+        # 根据用户站位补全
+        locked = set(user_reds)
+        available = [n for n in range(1, config.red.num_classes + 1) if n not in locked]
+        available_probas = [(n, probas[n-1]) for n in available]
+        available_probas.sort(key=lambda x: -x[1])
+        needed = config.red.sequence_len - len(locked)
+        extra = [n for n, _ in available_probas[:needed]]
+
+        all_reds = sorted(user_reds + extra) if user_reds else sorted(extra)
+        blue = user_blue if user_blue is not None else (int(pred.blue_ball) if pred.blue_ball else 1)
+
+        # 生成详细 ML 推荐理由
+        top5 = [(n, probas[n-1]) for n, _ in available_probas[:5]]
+        reason_parts = [
+            f"【{strategy_display}】基于历史数据的机器学习概率模型，对 1-33 每个号码计算出现概率。"
+        ]
+        if top5:
+            reason_parts.append(f"模型判断概率最高的前 5 个号码为：{'、'.join(f'#{n}({p*100:.1f}%)' for n, p in top5)}。")
+        if user_reds:
+            user_probas = [(n, probas[n-1]) for n in user_reds]
+            avg_user_prob = sum(p for _, p in user_probas) / len(user_probas) if user_probas else 0
+            reason_parts.append(f"您选择的号码平均概率为 {avg_user_prob*100:.1f}%")
+            if extra:
+                reason_parts.append(f"AI 为您补充了号码 {'、'.join(f'#{n}' for n in extra)}，与您的选择组合成最终推荐。")
+        need_blue = user_blue is None
+        if need_blue:
+            blue_probas = probas[config.red.num_classes:] if len(probas) > config.red.num_classes else probas[:config.blue.num_classes]
+            best_blue = int(np.argmax(blue_probas)) + 1 if len(blue_probas) > 0 else 1
+            blue = best_blue
+            reason_parts.append(f"蓝球推荐 #{best_blue}（模型评分最高）。")
+        else:
+            reason_parts.append(f"蓝球已锁定 #{user_blue}。")
+        reason = " ".join(reason_parts)
+
+    else:
+        strategy_key = rule_methods[data.strategy]
+        engine = RecommendationEngine(code)
+        rec = engine.generate(df)
+
+        result = None
+        for s in rec.strategies:
+            if s.strategy_name == strategy_key:
+                result = s
+                break
+        if not result:
+            result = rec.strategies[0]
+
+        # 根据用户站位补全
+        locked = set(user_reds)
+        strategy_reds = set(result.red_balls)
+
+        if user_reds:
+            extra = [n for n in result.red_balls if n not in locked]
+            needed = config.red.sequence_len - len(locked)
+            extra = extra[:needed]
+            while len(extra) < needed:
+                fallback = [n for n in range(1, config.red.num_classes + 1) if n not in locked and n not in extra]
+                extra.append(fallback[len(extra) % len(fallback)])
+            all_reds = sorted(user_reds + extra)
+        else:
+            all_reds = result.red_balls
+
+        blue = user_blue if user_blue is not None else int(result.blue_ball or 1)
+
+        # 详细中文推荐理由
+        hot_cold = compute_hot_cold_features(df, config, window=7)
+        skip = compute_skip_features(df, config)
+        last_hot = hot_cold.iloc[-1] if len(hot_cold) > 0 else None
+        last_skip = skip.iloc[-1] if len(skip) > 0 else None
+
+        if strategy_key == "conservative":
+            hot_counts = [(n, int(last_hot[f"hot_count_{n}"])) for n in all_reds] if last_hot is not None else []
+            hot_str = "、".join(f"#{n}({c}次)" for n, c in hot_counts[:3]) if hot_counts else ""
+            reason = (
+                f"【热号追踪】基于近 7 期开奖号码的频率统计，选取出现次数最多的号码。"
+                f"其中 {hot_str} 出现最为频繁，说明这些号码近期热度持续。"
+                f"红球和值 {sum(all_reds)}，奇偶比 {sum(1 for x in all_reds if x%2)}:{sum(1 for x in all_reds if x%2==0)}，"
+                f"符合近期热号分布规律。如果您有自已的心水号码，AI 会锁定您的选择并围绕它们补充热号。"
+            )
+        elif strategy_key == "aggressive":
+            skip_vals = [(n, int(last_skip[f"skip_{n}"])) for n in all_reds] if last_skip is not None else []
+            max_skip_all = max(int(last_skip[f"skip_{n}"]) for n in range(1, config.red.num_classes+1)) if last_skip is not None else 0
+            skip_str = "、".join(f"#{n}(遗漏{c}期)" for n, c in skip_vals[:3]) if skip_vals else ""
+            reason = (
+                f"【冷门博击】追踪遗漏值最大的号码，这些号码长时间未开出，"
+                f"根据概率回补规律有较大概率出现。当前全池最大遗漏 {max_skip_all} 期，"
+                f"推荐中包含 {skip_str} 等深度冷号。"
+                f"建议用冷号博击高回报，同时适当搭配热号降低风险。"
+            )
+        elif strategy_key == "balanced":
+            avg_sum = result.analysis.get("target_sum", 102) if result else 102
+            reason = (
+                f"【和值精选】以红球和值 {avg_sum} 为目标，选择奇偶比例均衡（"
+                f"{sum(1 for x in all_reds if x%2)}:{sum(1 for x in all_reds if x%2==0)}）的组合。"
+                f"实际和值 {sum(all_reds)}，与目标偏差 {abs(sum(all_reds) - avg_sum)}，属于合理范围。"
+                f"这种均衡型组合在历史开奖中覆盖率最高。"
+            )
+        elif strategy_key == "mystic":
+            reason = (
+                f"【幸运号码】基于您选择或系统生成的幸运数字组合。"
+                f"本策略参考了质数分布（质数 {sum(1 for x in all_reds if x in (2,3,5,7,11,13,17,19,23,29,31))} 个）、"
+                f"AC 值等非传统指标，为您提供具有个性化特征的号码组合。"
+            )
+        else:
+            reason = result.confidence_note
+
+    response = {
+        "code": code,
+        "name": config.name,
+        "strategy_name": data.strategy,
+        "display_name": strategy_display,
+        "recommended_reds": all_reds,
+        "recommended_blue": blue,
+        "reason": reason,
+        "analysis": result.analysis if is_rule else {"method": data.strategy, "mode": "ML概率"},
+    }
+
+    # 如果用户填了号码，加入对比
+    if user_reds:
+        user_set = set(user_reds)
+        rec_set = set(all_reds)
+        hits = user_set & rec_set
+        response["user_reds"] = user_reds
+        response["user_blue"] = user_blue
+        response["match_count"] = len(hits)
+        response["match_numbers"] = sorted(hits)
+        response["locked"] = len(locked)
+
+    return response
 
 
 @app.get("/api/predict/{code}")
@@ -210,7 +422,7 @@ async def api_predict(
         pipeline = UnifiedPipeline(code, method=method)
         pred = pipeline.predict(df)
     except FileNotFoundError as e:
-        raise HTTPException(404, f"模型未训练，请先执行训练脚本: {code}/{method}")
+        raise HTTPException(404, f"模型未训练，请先执行训练: {code}/{method}")
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
@@ -231,6 +443,120 @@ async def api_predict(
         "blue_ball": pred.blue_ball,
         "strategy": pred.strategy_used,
         "probabilities": [float(p) for p in probas] if probas is not None else None,
+    }
+
+
+@app.post("/api/train/{code}")
+async def api_train(
+    request: Request,
+    code: str,
+    method: str = "xgb",
+):
+    require_auth(request)
+    if code not in LOTTERY_CONFIGS:
+        raise HTTPException(400, f"未知彩种: {code}")
+
+    try:
+        df = load_history(code)
+        pipeline = UnifiedPipeline(code, method=method)
+        summary = pipeline.train(df)
+        return {
+            "ok": True,
+            "code": summary.code,
+            "name": summary.name,
+            "method": summary.method,
+            "n_samples": summary.n_samples,
+            "n_features": summary.n_features,
+            "metrics": summary.metrics,
+        }
+    except Exception as e:
+        from loguru import logger
+        logger.error(f"训练失败: {e}")
+        raise HTTPException(500, detail=f"训练失败: {e}")
+
+
+@app.get("/api/train/{code}/status")
+async def api_train_status(
+    request: Request,
+    code: str,
+    method: str = "xgb",
+):
+    require_auth(request)
+    if code not in LOTTERY_CONFIGS:
+        raise HTTPException(400, f"未知彩种: {code}")
+
+    import json
+    from pathlib import Path
+    from src.config import PATHS
+
+    df = load_history(code)
+    if df.empty:
+        return {"already_trained": False, "issues_count": 0}
+    current_issues = sorted(df["期数"].astype(str).tolist())
+
+    model_dir = Path(PATHS["data"]).parent / "model" / code / method
+    summary_path = model_dir / "summary.json"
+    if not summary_path.exists():
+        return {"already_trained": False, "issues_count": len(current_issues)}
+
+    with open(summary_path, 'r', encoding='utf-8') as f:
+        summary = json.load(f)
+
+    trained_issues = sorted(summary.get("trained_issues", []))
+    # 训练集用的是最近 N 期（df 降序取前 split_idx 行），
+    # 因此比较 current_issues（升序）的后 N 个
+    if trained_issues and trained_issues == current_issues[-len(trained_issues):]:
+        return {
+            "already_trained": True,
+            "n_samples": summary.get("n_samples", 0),
+            "issues_count": len(current_issues),
+            "method": method,
+        }
+    return {"already_trained": False, "issues_count": len(current_issues)}
+
+
+@app.post("/api/data/update/{code}")
+async def api_data_update(
+    request: Request,
+    code: str,
+):
+    require_auth(request)
+    if code not in LOTTERY_CONFIGS:
+        raise HTTPException(400, f"未知彩种: {code}")
+
+    from src.data_fetcher import download_history
+    from src.config import PATHS
+    from pathlib import Path
+    import pandas as pd
+
+    data_path = Path(PATHS["data"]) / code / "data.csv"
+
+    # 读取现有数据
+    existing = None
+    existing_issues = set()
+    if data_path.exists():
+        existing = pd.read_csv(data_path, encoding="utf-8")
+        if "期数" in existing.columns:
+            existing_issues = set(existing["期数"].astype(str).tolist())
+
+    # 下载最新数据（500.com 返回近 30 期）
+    result = download_history(code)
+
+    # 合并：新数据 + 旧数据，去重保留最新
+    fresh = pd.read_csv(data_path, encoding="utf-8")
+    if existing is not None and "期数" in fresh.columns:
+        combined = pd.concat([existing, fresh], ignore_index=True)
+        combined.drop_duplicates(subset=["期数"], keep="last", inplace=True)
+        combined.sort_values("期数", ascending=False, inplace=True)
+        combined.to_csv(data_path, index=False, encoding="utf-8")
+        fresh = combined
+
+    new_issues = set(fresh["期数"].astype(str).tolist()) - existing_issues if existing_issues else set()
+    return {
+        "ok": True,
+        "code": code,
+        "total_issues": len(fresh),
+        "new_issues": len(new_issues),
     }
 
 
@@ -268,7 +594,11 @@ async def api_history(
 
 
 @app.get("/api/stats/{code}")
-async def api_stats(request: Request, code: str):
+async def api_stats(
+    request: Request,
+    code: str,
+    periods: int = Query(default=7, ge=3, le=200),
+):
     require_auth(request)
     if code not in LOTTERY_CONFIGS:
         raise HTTPException(400, f"未知彩种: {code}")
@@ -277,7 +607,7 @@ async def api_stats(request: Request, code: str):
     config = LOTTERY_CONFIGS[code]
 
     # 频率统计
-    hot_cold = compute_hot_cold_features(df, config, window=30)
+    hot_cold = compute_hot_cold_features(df, config, window=periods)
     last_hot = hot_cold.iloc[-1]
 
     # 遗漏统计
@@ -372,9 +702,9 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 @app.on_event("startup")
 async def startup():
-    """启动时清理过期会话并初始化数据库。"""
-    from src.session import _get_conn
-    _get_conn()  # 确保 sessions 表存在
+    """启动时初始化运行时目录、日志配置、清理过期会话。"""
+    from src.bootstrap import bootstrap
+    bootstrap()
     cleaned = cleanup_expired()
     if cleaned > 0:
         from loguru import logger

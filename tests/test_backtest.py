@@ -101,7 +101,7 @@ class TestCalculatePrize:
         prize = calculate_prize(match_count, bet_blue == actual_blue)
         assert prize == 6  # 六等奖奖级为 6
 
-    def test_third_prize_6_red_no_blue(self, winning_numbers):
+    def test_second_prize_6_red_no_blue(self, winning_numbers):
         """三等奖：6 红全中但蓝球未中。"""
         bet_reds = winning_numbers["reds"]
         bet_blue = winning_numbers["blue"] + 1 if winning_numbers["blue"] < 16 else 1
@@ -177,7 +177,7 @@ class TestStrategyBacktestEngine:
     def test_all_strategies_have_output(self, sample_ssq_df):
         """四种策略均有输出。"""
         engine = StrategyBacktestEngine(SSQ_CONFIG, window_size=20)
-        report = engine.run(sample_ssq_df, n_backtest=10)
+        report = engine.run(sample_ssq_df, n_backtest=10, include_ml=False)
         expected_strategies = ["conservative", "aggressive", "balanced", "mystic"]
         for name in expected_strategies:
             assert name in report.performances, f"缺少策略: {name}"
@@ -188,7 +188,7 @@ class TestStrategyBacktestEngine:
     def test_performance_fields_complete(self, sample_ssq_df):
         """StrategyPerformance 字段完整。"""
         engine = StrategyBacktestEngine(SSQ_CONFIG, window_size=20)
-        report = engine.run(sample_ssq_df, n_backtest=10)
+        report = engine.run(sample_ssq_df, n_backtest=10, include_ml=False)
         for name, perf in report.performances.items():
             assert isinstance(perf, StrategyPerformance)
             assert perf.avg_match >= 0
@@ -204,7 +204,7 @@ class TestStrategyBacktestEngine:
 class TestRankingReport:
     def test_report_structure(self, sample_ssq_df):
         """排名报告结构正确。"""
-        report = generate_ranking_report("ssq", window_size=20, n_backtest=10, df=sample_ssq_df)
+        report = generate_ranking_report("ssq", window_size=20, n_backtest=10, df=sample_ssq_df, include_ml=False)
         assert report.total_windows > 0
         assert len(report.performances) >= 4
         assert report.random_baseline is not None

@@ -64,8 +64,8 @@ def compute_hot_cold_features(
 
     for i in range(len(df)):
         # 移除滑出窗口的号码
-        if i > window:
-            old = red_balls[i - window - 1]
+        if i >= window:
+            old = red_balls[i - window]
             for b in old:
                 counter[b] -= 1
                 if counter[b] <= 0:

@@ -14,8 +14,9 @@ tqdm==4.66.4
 pyyaml==6.0.1
 python-dotenv==1.0.1
 responses==0.25.0
-slowapi>=0.1.9
-itsdangerous>=2.1.0
+fastapi>=0.111.0
+uvicorn>=0.29.0
+pydantic>=2.0.0
 
 # 开发依赖
 black==24.4.2

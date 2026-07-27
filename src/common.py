@@ -11,27 +11,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import Dict, Optional
 
 from loguru import logger
 
 from .config import LOTTERY_CONFIGS, ensure_runtime_directories, get_lottery_config
 from .data_fetcher import download_history, get_current_issue, load_history
-
-if TYPE_CHECKING:  # pragma: no cover
-    from .pipeline import TrainingSummary
-
-
-_PIPELINE_MODULE = None
-
-
-def _load_pipeline():
-    global _PIPELINE_MODULE
-    if _PIPELINE_MODULE is None:
-        from . import pipeline as _pipeline  # noqa: WPS433
-
-        _PIPELINE_MODULE = _pipeline
-    return _PIPELINE_MODULE
+from .unified_pipeline import train_unified, predict_unified, UnifiedTrainingSummary, UnifiedPrediction
 
 
 def get_data_run(
@@ -61,37 +47,39 @@ def get_current_number(name: str) -> str:
 
 def train_pipeline(
     name: str,
-    window_size: Optional[int] = None,
-    batch_size: Optional[int] = None,
-    red_epochs: Optional[int] = None,
-    blue_epochs: Optional[int] = None,
+    method: str = "xgb",
+    validation_ratio: float = 0.15,
     source: Optional[str] = None,
-) -> "TrainingSummary":
-    """高层训练接口，封装 pipeline.train_lottery_models。"""
+) -> UnifiedTrainingSummary:
+    """高层训练接口，使用统一管线（UnifiedPipeline）。
 
+    Args:
+        name: 彩票代码
+        method: 训练方法 (xgb/lstm/poisson/stacking)
+        validation_ratio: 验证集比例
+        source: 数据源（未使用，保留兼容）
+    """
     code = name.lower().strip()
-    logger.info("开始训练【{}】模型...", LOTTERY_CONFIGS[code].name)
-    pipeline_module = _load_pipeline()
-    summary = pipeline_module.train_lottery_models(
-        code=code,
-        window_size=window_size,
-        batch_size=batch_size,
-        red_epochs=red_epochs,
-        blue_epochs=blue_epochs,
-        source=source,
-    )
+    logger.info("开始训练【{}】模型, 方法={}...", LOTTERY_CONFIGS[code].name, method)
+    df = load_history(code)
+    summary = train_unified(df, code=code, method=method, validation_ratio=validation_ratio)
     logger.success("训练完成: {}", summary)
     return summary
 
 
-def predict_latest(name: str, window_size: Optional[int] = None, source: Optional[str] = None) -> Dict[str, list]:
-    """使用最新模型预测下一期号码。"""
+def predict_latest(name: str, method: str = "xgb", source: Optional[str] = None) -> Dict[str, list]:
+    """使用统一管线预测下一期号码。
 
+    Args:
+        name: 彩票代码
+        method: 预测方法 (xgb/lstm/poisson/stacking)
+        source: 数据源（未使用，保留兼容）
+    """
     code = name.lower().strip()
     cfg = get_lottery_config(code)
-    pipeline_module = _load_pipeline()
-    predictions = pipeline_module.predict_next_draw(code=code, window_size=window_size, source=source)
-    readable = {key: list(map(int, value.tolist())) for key, value in predictions.items()}
+    df = load_history(code)
+    pred = predict_unified(df, code=code, method=method)
+    readable = {"red_balls": [int(b) for b in pred.red_balls], "blue_ball": int(pred.blue_ball) if pred.blue_ball else None}
     logger.info("【{}】预测结果: {}", cfg.name, readable)
     return readable
 

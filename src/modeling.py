@@ -77,13 +77,17 @@ class XGBoostPredictor:
         """
         logger.info("训练 XGBoost 模型: {} 个号码的二分类器", self.num_classes)
 
+        self._pos_rates = {}
+
         for num_idx in range(self.num_classes):
             y_num = y[:, num_idx]
             pos_rate = y_num.mean()
+            self._pos_rates[num_idx] = pos_rate
 
-            # 如果某个号码从未出现或每次都出现，跳过
+            # 如果某个号码从未出现或每次都出现，用经验概率兜底
             if pos_rate < 0.01 or pos_rate > 0.99:
-                logger.debug("号码 {}: 正样本比例 {:.2%}，跳过", num_idx + 1, pos_rate)
+                logger.debug("号码 {}: 正样本比例 {:.2%}，跳过 XGBoost 训练，使用经验概率",
+                             num_idx + 1, pos_rate)
                 continue
 
             model = xgb.XGBClassifier(**self.xgb_params)
@@ -114,6 +118,11 @@ class XGBoostPredictor:
         for num_idx, model in self.models.items():
             # predict_proba 返回 (n_samples, 2)，取正类概率
             proba[:, num_idx] = model.predict_proba(X)[:, 1]
+
+        # 对跳过的号码使用经验概率兜底
+        for num_idx in range(self.num_classes):
+            if num_idx not in self.models and num_idx in self._pos_rates:
+                proba[:, num_idx] = self._pos_rates[num_idx]
 
         return proba
 

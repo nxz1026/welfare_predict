@@ -102,12 +102,17 @@ class TianyanAPISource(DataSource):
         if not self.api_key:
             raise ValueError("天行数据 API key 未设置")
 
+        from .config import LOTTERY_CONFIGS
+        cfg = LOTTERY_CONFIGS.get(code)
+        if cfg is None:
+            raise ValueError(f"未知彩种: {code}")
+
         # 天行数据接口
         url = "https://api.tianapi.com/txapi/lottery/index"
         params = {
             "key": self.api_key,
             "code": code,
-            "num": 100,  # 每次最多 100 期
+            "num": 100,
         }
 
         import requests
@@ -121,19 +126,19 @@ class TianyanAPISource(DataSource):
         if not records:
             raise ValueError("API 返回空数据")
 
-        # 转换为 DataFrame
+        red_len = cfg.red.sequence_len
+        blue_len = cfg.blue.sequence_len if cfg.blue else 0
+
+        # 动态映射 API 字段到标准列名
         rows = []
         for record in records:
-            rows.append({
-                "期数": record.get("expect"),
-                "红球_1": int(record.get("red1", 0)),
-                "红球_2": int(record.get("red2", 0)),
-                "红球_3": int(record.get("red3", 0)),
-                "红球_4": int(record.get("red4", 0)),
-                "红球_5": int(record.get("red5", 0)),
-                "红球_6": int(record.get("red6", 0)),
-                "蓝球_1": int(record.get("blue", 0)),
-            })
+            row = {"期数": record.get("expect")}
+            for i in range(1, red_len + 1):
+                row[f"红球_{i}"] = int(record.get(f"red{i}", 0))
+            if blue_len > 0:
+                for i in range(1, blue_len + 1):
+                    row[f"蓝球_{i}"] = int(record.get(f"blue{i}" if blue_len > 1 else "blue", 0))
+            rows.append(row)
 
         df = pd.DataFrame(rows)
         df.sort_values("期数", inplace=True)

@@ -12,13 +12,13 @@ import sys
 from pathlib import Path
 
 from loguru import logger
+import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import LOTTERY_CONFIGS, PATHS  # noqa: E402
-from src.data_sources import DataSourceContext, DataSourceError, LocalCsvSource  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -46,12 +46,9 @@ def main() -> None:
     if dest_path.exists() and not args.force:
         raise SystemExit(f"目标文件已存在：{dest_path}，如需覆盖请加 --force")
 
-    source = LocalCsvSource()
-    context = DataSourceContext(code=code, source="local_csv", path=src_path)
-    df = source.fetch_history(context)
-
+    df = pd.read_csv(src_path, encoding="utf-8")
     df.to_csv(dest_path, index=False, encoding="utf-8")
-    logger.success("CSV 导入完成：{} -> {}", src_path, dest_path)
+    logger.success("CSV 导入完成：{} -> {} ({} 行)", src_path, dest_path, len(df))
 
 
 if __name__ == "__main__":
