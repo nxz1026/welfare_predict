@@ -64,6 +64,18 @@ class ConservativeStrategy:
     def __init__(self, config: LotteryModelConfig):
         self.config = config
 
+    def _select_blue(self, df: pd.DataFrame) -> int:
+        """蓝球：选近期热号"""
+        recent = df.tail(30)
+        blue_counts = {}
+        for _, row in recent.iterrows():
+            b = int(row.get("蓝球_1", 0))
+            if 1 <= b <= self.config.blue.num_classes:
+                blue_counts[b] = blue_counts.get(b, 0) + 1
+        if blue_counts:
+            return max(blue_counts, key=blue_counts.get)
+        return random.randint(1, self.config.blue.num_classes)
+
     def generate(
         self,
         df: pd.DataFrame,
@@ -85,13 +97,7 @@ class ConservativeStrategy:
         selected_idx = np.argsort(combined_score)[-6:]
         red_balls = sorted([int(i + 1) for i in selected_idx])
 
-        # 蓝球：选近期热号
-        blue_recent = {}
-        for _, row in recent.iterrows():
-            b = int(row.get("蓝球_1", 0))
-            if 1 <= b <= self.config.blue.num_classes:
-                blue_recent[b] = blue_recent.get(b, 0) + 1
-        blue_ball = max(blue_recent, key=blue_recent.get) if blue_recent else random.randint(1, self.config.blue.num_classes)
+        blue_ball = self._select_blue(df)
 
         return StrategyResult(
             strategy_name=self.name,
