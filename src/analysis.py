@@ -20,10 +20,9 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
-from .config import LotteryModelConfig, get_lottery_config
+from .config import LOTTERY_CONFIGS, LotteryModelConfig, get_lottery_config
 from .data_fetcher import load_history
-from .backtest import BacktestEngine, BacktestReport
-from .strategy_backtest import StrategyBacktestEngine, RankingReport
+from .strategy_backtest import StrategyBacktestEngine
 from .feature_engineering import compute_hot_cold_features, compute_skip_features
 
 
@@ -140,8 +139,8 @@ def generate_roi_report(
         格式化报告文本
     """
     df = load_history(code)
-    config = get_lottery_config(code)
-    
+    config = LOTTERY_CONFIGS[code]
+
     engine = StrategyBacktestEngine(config, window_size=window_size, bet_cost=bet_cost)
     report = engine.run(df, n_backtest=n_backtest)
     

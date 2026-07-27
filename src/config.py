@@ -77,7 +77,7 @@ NETWORK_CONFIG = {
 }
 
 
-ALLOWED_DOMAINS = {"datachart.500.com", "data.917500.cn", "datachart.500.com"}
+ALLOWED_DOMAINS = {"datachart.500.com", "data.917500.cn"}
 
 DATA_FILE_NAME = "data.csv"
 MODEL_METADATA_FILE = "metadata.json"

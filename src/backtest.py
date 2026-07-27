@@ -27,14 +27,6 @@ from .model_stacking import StackingMetaLearner
 
 
 @dataclass
-class DrawResult:
-    """一期开奖号码"""
-    issue: str
-    red_balls: list  # 6 个红球 (1-based)
-    blue_ball: Optional[int] = None
-
-
-@dataclass
 class BetResult:
     """一期预测结果"""
     issue: str

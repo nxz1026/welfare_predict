@@ -9,11 +9,10 @@ from __future__ import annotations
 
 import os
 import secrets
-from datetime import datetime, timedelta
-from functools import wraps
+from datetime import datetime
 from typing import Optional
 
-from fastapi import FastAPI, Request, Response, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -32,7 +31,6 @@ from src.analysis import generate_comprehensive_report
 
 USERNAME = os.getenv("LOTTERY_USER", "admin")
 PASSWORD = os.getenv("LOTTERY_PASS", "caipiao2026")
-SECRET_KEY = os.getenv("LOTTERY_SECRET", secrets.token_hex(32))
 SESSION_COOKIE = "lottery_session"
 SESSION_HOURS = 12
 
@@ -75,7 +73,7 @@ class LoginRequest(BaseModel):
 
 
 @app.post("/api/login")
-async def login(request: Request, body: Response, data: LoginRequest):
+async def login(request: Request, data: LoginRequest):
     if data.username == USERNAME and data.password == PASSWORD:
         token = create_session()
         request.app.state.session = token

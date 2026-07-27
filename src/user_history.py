@@ -138,7 +138,7 @@ class UserHistory:
             "total_won": total_won,
             "net_profit": total_won - total_spent,
             "roi": (total_won - total_spent) / total_spent if total_spent > 0 else 0,
-            "total_purchases": len(self.data["recommendations"]),
+            "total_recommendations": len(self.data["recommendations"]),
             "total_wins": len(self.data["wins"]),
         }
 

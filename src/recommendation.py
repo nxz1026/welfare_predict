@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -24,9 +24,6 @@ from .config import LotteryModelConfig, get_lottery_config
 from .feature_engineering import (
     compute_hot_cold_features,
     compute_skip_features,
-    compute_sum_features,
-    compute_odd_even_features,
-    compute_ac_value,
 )
 
 
@@ -239,11 +236,12 @@ class MysticStrategy:
         lucky = [n for n in lucky if 1 <= n <= self.config.red.num_classes]
 
         # 选 3 个幸运数字 + 3 个随机
-        random_part = random.sample(
-            [n for n in range(1, self.config.red.num_classes + 1) if n not in lucky],
-            min(3, self.config.red.num_classes - len(lucky))
-        )
         lucky_part = random.sample(lucky, min(3, len(lucky)))
+        remaining = [n for n in range(1, self.config.red.num_classes + 1) if n not in lucky_part]
+        random_part = random.sample(
+            remaining,
+            min(3, self.config.red.num_classes - len(lucky_part))
+        )
 
         red_balls = sorted(lucky_part + random_part)
 

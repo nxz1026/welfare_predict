@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable, Optional
+from typing import Optional
 from urllib.parse import urlparse
 
 import pandas as pd

@@ -79,7 +79,7 @@ class StrategyBacktestEngine:
             df: 历史数据
             n_backtest: 回测期数，默认回测所有可用期数
         """
-        red_cols = ["红球_1", "红球_2", "红球_3", "红球_4", "红球_5", "红球_6"]
+        red_cols = [f"红球_{i+1}" for i in range(self.config.red.sequence_len)]
 
         # 总期数
         total = len(df) - self.window_size

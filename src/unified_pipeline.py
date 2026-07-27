@@ -17,7 +17,7 @@ import pickle
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -28,7 +28,6 @@ from .feature_engineering import build_feature_matrix, build_binary_labels
 from .modeling import XGBoostPredictor
 from .model_lstm import LSTMPredictor
 from .model_poisson import PoissonPrior
-from .model_stacking import StackingMetaLearner
 
 
 @dataclass
@@ -137,10 +136,8 @@ class UnifiedPipeline:
             self.model = PoissonPrior(self.config, **kwargs)
             self.model.train(X_train, y_train)
         elif self.method == "stacking":
-            self.model = StackingMetaLearner(self.config, **kwargs)
-            # Stacking 需要先训练基学习器，这里简化：只用 XGBoost 训练
-            # 完整 stacking 需要多轮训练，暂不支持
-            logger.warning("Stacking 方法当前需要手动训练基学习器，fallback 到 XGBoost")
+            # Stacking 需要手动训练基学习器，fallback 到 XGBoost
+            logger.warning("Stacking 需要手动训练基学习器，fallback 到 XGBoost")
             self.model = XGBoostPredictor(self.config, **kwargs)
             self.model.train(X_train, y_train)
         else:
@@ -239,11 +236,7 @@ class UnifiedPipeline:
         # 蓝球（如果有配置）
         blue_ball = None
         if self.config.blue:
-            if proba is not None:
-                # 蓝球：独立处理或取中位数
-                blue_ball = np.random.randint(1, self.config.blue.num_classes + 1)
-            else:
-                blue_ball = np.random.randint(1, self.config.blue.num_classes + 1)
+            blue_ball = np.random.randint(1, self.config.blue.num_classes + 1)
 
         return UnifiedPrediction(
             code=self.code,
