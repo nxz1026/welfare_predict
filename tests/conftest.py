@@ -10,28 +10,20 @@ from src import config as project_config
 
 @pytest.fixture(autouse=True)
 def isolate_paths(tmp_path) -> Iterator[None]:
-    """将数据/模型等输出目录重定向到临时路径，保证测试隔离。"""
+    """將 data/model 隔離到臨時目錄，確保測試不互相影響。"""
 
     original_paths = project_config.PATHS.copy()
-    original_name_path = project_config.name_path.copy()
 
-    for key in project_config.PATHS.keys():
+    for key in list(project_config.PATHS.keys()):
         new_dir = tmp_path / key
         new_dir.mkdir(parents=True, exist_ok=True)
         project_config.PATHS[key] = new_dir
 
-    project_config.name_path = {
-        code: {
-            "name": cfg.name,
-            "path": f"{(project_config.PATHS['data'] / code).as_posix()}/",
-        }
-        for code, cfg in project_config.LOTTERY_CONFIGS.items()
-    }
-
     yield
 
-    project_config.PATHS.update(original_paths)
-    project_config.name_path = original_name_path
+    # 恢復原始路徑
+    for key, val in original_paths.items():
+        project_config.PATHS[key] = val
 
 
 @pytest.fixture(autouse=True)

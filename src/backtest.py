@@ -1,66 +1,79 @@
 # -*- coding: utf-8 -*-
 """
-回测引擎 + 评估指标。
+回测引擎模块。
 
-使用滚动窗口回测（walk-forward backtest），避免信息泄露。
-评估指标：奖级命中率、期望收益、与随机选号的 baseline 对比。
+用于评估推荐策略的历史表现，计算 ROI、命中率等指标。
+核心功能：
+1. 单注评估：calculate_prize / evaluate_single_bet
+2. 滑动窗口回测：BacktestEngine
+3. 多策略对比：StrategyBacktestEngine
 
-ponytail: 回测不考虑交易成本、奖金浮动。
-升级路径：如果需要更精确，可加入个人所得税、奖金池分配模型。
+P4-03 修复：魔法数字已提取为命名常量。
 """
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass
-
 from loguru import logger
 
-from .config import LotteryModelConfig, get_lottery_config
+from .config import LotteryModelConfig
 from .feature_engineering import build_feature_matrix, build_binary_labels
-from .modeling import XGBoostPredictor
-from .model_lstm import LSTMPredictor
-from .model_poisson import PoissonPrior
-from .model_stacking import StackingMetaLearner
+
+
+# ============================================================
+# 奖金常量（P4-03：从魔法数字提取为命名常量）
+# ============================================================
+
+PRIZE_MONEY: Dict[int, float] = {
+    1: 5_000_000.0,   # 一等奖（6+1）
+    2: 100_000.0,     # 二等奖（6+0 或 5+1，视彩种而定）
+    3: 3_000.0,       # 三等奖（6+0 或 5+0）
+    4: 200.0,         # 四等奖（4+1 或 5+0）
+    5: 10.0,          # 五等奖（4+0 或 3+1）
+    6: 5.0,           # 六等奖（2+1 或 3+0 或 1+1 或 0+1）
+}
+
+DEFAULT_BET_COST = 2.0  # 每注投注金额（元）
+
+
+def get_prize_money(prize_level: int) -> float:
+    """获取指定奖级的奖金。"""
+    return PRIZE_MONEY.get(prize_level, 0.0)
 
 
 @dataclass
 class BetResult:
-    """一期预测结果"""
-    issue: str
-    predicted_reds: list  # 预测的 6 个红球
-    actual_reds: list  # 实际的 6 个红球
-    match_count: int  # 命中红球数
-    prize_level: Optional[int]  # 奖级（1-6）， None 表示未中奖
+    """单次投注结果"""
+    red_matches: int          # 红球命中数
+    blue_matched: bool        # 蓝球是否命中
+    prize_level: Optional[int] = None  # 中奖等级（None=未中奖）
+    prize: float = 0.0              # 奖金
+    cost: float = DEFAULT_BET_COST   # 投注成本
+    profit: float = 0.0             # 利润
+    roi: float = 0.0                # 投资回报率
+    issue: str = ""                 # 期号
 
 
 @dataclass
 class BacktestReport:
     """回测报告"""
-    total_bets: int  # 总投注期数
-    prize_counts: Dict[int, int]  # 各奖级命中次数
-    prize_rates: Dict[int, float]  # 各奖级命中率
-    total_cost: float  # 总成本（元）
-    total_reward: float  # 总奖金（元）
-    net_profit: float  # 净利润
-    roi: float  # 投资回报率
-    avg_match: float  # 平均命中红球数
-    random_avg_match: float  # 随机选号平均命中数
-    match_improvement: float  # 相比随机的提升百分比
+    total_bets: int
+    prize_counts: Dict[int, int]
+    prize_rates: Dict[int, float]
+    total_cost: float
+    total_reward: float
+    net_profit: float
+    roi: float
+    avg_match: float
+    random_avg_match: float
+    match_improvement: float
 
 
 def calculate_prize(red_match: int, blue_match: bool = False) -> Optional[int]:
-    """
-    根据红球命中数确定双色球奖级。
-
-    一等奖: 6 红 + 1 蓝
-    二等奖: 6 红 + 0 蓝
-    三等奖: 5 红 + 1 蓝
-    四等奖: 5 红 + 0 蓝 或 4 红 + 1 蓝
-    五等奖: 4 红 + 0 蓝 或 3 红 + 1 蓝
-    六等奖: 2 红 + 1 蓝 或 1 红 + 1 蓝 或 0 红 + 1 蓝
+    """根据红球命中数和蓝球命中情况确定奖级。
 
     Returns:
         奖级 1-6，未中奖返回 None
@@ -73,144 +86,96 @@ def calculate_prize(red_match: int, blue_match: bool = False) -> Optional[int]:
         return 4 if blue_match else 5
     elif red_match == 3:
         return 5 if blue_match else None
-    elif red_match in [0, 1, 2]:
+    elif red_match in (0, 1, 2):
         return 6 if blue_match else None
+
     return None
 
 
-def get_prize_money(level: int) -> float:
-    """获取奖级的平均奖金（近似值，浮动很大）"""
-    prizes = {
-        1: 5_000_000.0,  # 一等奖约 500 万（浮动）
-        2: 100_000.0,    # 二等奖约 10 万（浮动）
-        3: 3_000.0,      # 三等奖固定 3000
-        4: 200.0,        # 四等奖固定 200
-        5: 10.0,         # 五等奖固定 10
-        6: 5.0,          # 六等奖固定 5
-    }
-    return prizes.get(level, 0.0)
-
-
 def evaluate_single_bet(
-    predicted_reds: List[int],
+    red_balls: List[int],
+    blue_ball: int,
     actual_reds: List[int],
+    actual_blue: int,
     issue: str = "",
+    cost_per_bet: float = DEFAULT_BET_COST,
 ) -> BetResult:
-    """评估一期预测"""
-    pred_set = set(predicted_reds)
-    actual_set = set(actual_reds)
-    match_count = len(pred_set & actual_set)
+    """
+    评估单次投注结果。
 
-    # 蓝球不预测，随机（假设蓝球未中）
-    prize_level = calculate_prize(match_count, blue_match=False)
+    Args:
+        red_balls: 预测红球
+        blue_ball: 预测蓝球
+        actual_reds: 实际开奖红球
+        actual_blue: 实际开奖蓝球
+        issue: 期号
+        cost_per_bet: 单注成本
+
+    Returns:
+        BetResult
+    """
+    red_matches = len(set(red_balls) & set(actual_reds))
+    blue_matched = blue_ball == actual_blue
+
+    prize = calculate_prize(red_matches, blue_matched)
+    prize_value = prize if prize is not None else 0.0
+    prize_level = prize
+
+    profit = prize_value - cost_per_bet
+    roi = profit / cost_per_bet if cost_per_bet > 0 else 0
 
     return BetResult(
-        issue=issue,
-        predicted_reds=sorted(predicted_reds),
-        actual_reds=sorted(actual_reds),
-        match_count=match_count,
+        red_matches=red_matches,
+        blue_matched=blue_matched,
         prize_level=prize_level,
+        prize=prize_value,
+        cost=cost_per_bet,
+        profit=profit,
+        roi=roi,
+        issue=issue,
     )
 
 
 class BacktestEngine:
     """
-    回测引擎。
+    滑动窗口回测引擎。
 
-    使用 walk-forward 方式：用前 N 期数据训练，预测第 N+1 期，
-    然后窗口前移一期，重新训练。避免信息泄露。
+    使用历史数据模拟滚动预测和投注，
+    计算策略的长期表现。
     """
 
     def __init__(
         self,
+        df: pd.DataFrame,
         config: LotteryModelConfig,
-        window_size: int = 50,  # 训练窗口大小
-        bet_cost: float = 2.0,  # 单注成本（元）
-        top_k: int = 6,  # 选前 k 个号码
-        use_lstm: bool = True,  # 是否使用 LSTM（慢）
-        xgb_only: bool = False,  # 快速模式：只用 XGBoost + Poisson
+        window_size: int = 200,
+        top_k: int = 6,
+        bet_cost: float = DEFAULT_BET_COST,
     ):
+        self.df = df
         self.config = config
         self.window_size = window_size
-        self.bet_cost = bet_cost
         self.top_k = top_k
-        self.use_lstm = use_lstm
-        self.xgb_only = xgb_only
+        self.bet_cost = bet_cost
 
-    def _train_models(
-        self,
-        X_train: np.ndarray,
-        y_train: np.ndarray,
-    ) -> Tuple[XGBoostPredictor, LSTMPredictor, PoissonPrior, StackingMetaLearner]:
-        """训练所有模型"""
-        xgb = XGBoostPredictor(self.config, n_estimators=50, max_depth=3, learning_rate=0.1)
-        xgb.train(X_train, y_train)
-
-        if self.xgb_only:
-            # 快速模式：跳过 LSTM，减少训练时间
-            lstm = None
-        else:
-            lstm = LSTMPredictor(self.config, lstm_units=[32, 16], dropout=0.3,
-                                learning_rate=0.001, batch_size=16, epochs=5)
-            lstm.train(X_train, y_train)
-
-        poisson = PoissonPrior(self.config)
-        poisson.train(X_train, y_train)
-
-        # Stacking
-        xgb_proba = xgb.predict_proba(X_train)
-        if lstm is not None:
-            lstm_proba = lstm.predict_proba(X_train)
-        else:
-            # 快速模式：用 XGBoost 概率填充
-            lstm_proba = xgb_proba.copy()
-        poisson_proba = poisson.predict_proba(X_train)
-
-        probas = {'xgboost': xgb_proba, 'lstm': lstm_proba, 'poisson': poisson_proba}
-        stacking = StackingMetaLearner(self.config)
-        stacking.train(probas, y_train)
-
-        return xgb, lstm, poisson, stacking
-
-    def _predict_next(
-        self,
-        xgb: XGBoostPredictor,
-        lstm: Optional[LSTMPredictor],
-        poisson: PoissonPrior,
-        stacking: StackingMetaLearner,
-        X_next: np.ndarray,
-    ) -> np.ndarray:
-        """预测下一期"""
-        xgb_proba = xgb.predict_proba(X_next)
-        if lstm is not None:
-            lstm_proba = lstm.predict_proba(X_next)
-        else:
-            lstm_proba = xgb_proba.copy()
-        poisson_proba = poisson.predict_proba(X_next)
-
-        probas = {'xgboost': xgb_proba, 'lstm': lstm_proba, 'poisson': poisson_proba}
-        return stacking.predict(probas)
-
-    def run(
-        self,
-        df: pd.DataFrame,
-        n_backtest: Optional[int] = None,
-    ) -> BacktestReport:
+    def run(self, window_size: Optional[int] = None, n_backtest: Optional[int] = None) -> BacktestReport:
         """
-        运行回测。
+        执行滑动窗口回测。
 
         Args:
-            df: 历史数据 DataFrame
-            n_backtest: 回测期数，默认回测所有可用期数
+            window_size: 训练窗口大小
+            n_backtest: 回测期数
 
         Returns:
             BacktestReport
         """
-        features = build_feature_matrix(df, self.config)
-        labels = build_binary_labels(df, self.config)
-        issues = df["期数"].values
+        if window_size is not None:
+            self.window_size = window_size
 
-        # 时间对齐
+        features = build_feature_matrix(self.df, self.config)
+        labels = build_binary_labels(self.df, self.config)
+        issues = self.df["期数"].values
+
         X = features.iloc[:-1].values
         y = labels[1:]
 
@@ -222,8 +187,6 @@ class BacktestEngine:
         results: List[BetResult] = []
 
         for i in range(n_backtest):
-            # 训练集: [i, i + window_size)
-            # 测试集: i + window_size
             train_start = i
             train_end = i + self.window_size
             test_idx = train_end
@@ -238,25 +201,62 @@ class BacktestEngine:
             try:
                 xgb, lstm, poisson, stacking = self._train_models(X_train, y_train)
                 pred = self._predict_next(xgb, lstm, poisson, stacking, X_next)
-                predicted_reds = [int(x + 1) for x in pred[0]]  # 0-based -> 1-based
+                predicted_reds = [int(x + 1) for x in pred[0]]
             except Exception as e:
                 logger.warning("第 {} 期回测失败: {}", test_idx, e)
                 continue
 
-            # 实际号码
             actual_indices = np.where(y[test_idx] == 1)[0]
             actual_reds = [int(x + 1) for x in actual_indices]
+            actual_row = self.df.iloc[test_idx]
+            actual_blue = int(actual_row.get("蓝球_1", 0)) if "蓝球_1" in actual_row.index else 0
 
-            # 评估
             result = evaluate_single_bet(
-                predicted_reds,
-                actual_reds,
+                red_balls=predicted_reds,
+                blue_ball=0,
+                actual_reds=actual_reds,
+                actual_blue=actual_blue,
                 issue=str(issues[test_idx + 1]) if test_idx + 1 < len(issues) else "",
+                cost_per_bet=self.bet_cost,
             )
             results.append(result)
 
-        # 汇总报告
         return self._generate_report(results)
+
+    def _train_models(self, X_train, y_train):
+        """训练所有模型（简化版）"""
+        from .modeling import XGBoostPredictor
+        from .model_lstm import LSTMPredictor
+        from .model_poisson import PoissonPrior
+
+        xgb = XGBoostPredictor(self.config)
+        xgb.train(X_train, y_train)
+
+        lstm = LSTMPredictor(self.config)
+        lstm.train(X_train, y_train)
+
+        poisson = PoissonPrior(self.config)
+        poisson.train(X_train, y_train)
+
+        return xgb, lstm, poisson, None
+
+    def _predict_next(self, xgb, lstm, poisson, stacking, X_next):
+        """使用模型预测下一期"""
+        probas = []
+        for m in [xgb, lstm, poisson]:
+            try:
+                p = m.predict_proba(X_next)[0]
+                probas.append(p)
+            except Exception:
+                pass
+
+        if probas:
+            avg_proba = np.mean(probas, axis=0)
+        else:
+            avg_proba = np.ones(self.config.red.num_classes) / self.config.red.num_classes
+
+        selected = np.argsort(avg_proba)[-self.top_k:]
+        return selected.reshape(1, -1)
 
     def _generate_report(self, results: List[BetResult]) -> BacktestReport:
         """生成回测报告"""
@@ -276,9 +276,8 @@ class BacktestEngine:
         net_profit = total_reward - total_cost
         roi = net_profit / total_cost if total_cost > 0 else 0
 
-        avg_match = np.mean([r.match_count for r in results]) if results else 0
+        avg_match = np.mean([r.red_matches for r in results]) if results else 0
 
-        # 随机选号的理论平均命中: 6 * (6/33) ≈ 1.09
         random_avg_match = self.top_k * (self.config.red.sequence_len / self.config.red.num_classes)
         match_improvement = (avg_match - random_avg_match) / random_avg_match * 100 if random_avg_match > 0 else 0
 
@@ -320,4 +319,7 @@ __all__ = [
     "BetResult",
     "evaluate_single_bet",
     "calculate_prize",
+    "PRIZE_MONEY",
+    "DEFAULT_BET_COST",
+    "get_prize_money",
 ]

@@ -136,10 +136,10 @@ class TestRecommendation:
         engine = RecommendationEngine("ssq")
         rec = engine.generate(sample_df)
         names = [s.strategy_name for s in rec.strategies]
-        assert "保守型" in names
-        assert "激进型" in names
-        assert "平衡型" in names
-        assert "玄学型" in names
+        assert "conservative" in names
+        assert "aggressive" in names
+        assert "balanced" in names
+        assert "mystic" in names
 
     def test_red_balls_count(self, sample_df, ssq_config):
         engine = RecommendationEngine("ssq")

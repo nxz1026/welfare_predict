@@ -1,113 +1,79 @@
-"""Bootstrap helpers run early to prepare runtime compatibility (e.g. TensorFlow shims).
-
-This module should be imported as early as possible by entry scripts so that
-third-party libraries (Keras) see the compatibility shims at import-time.
+# -*- coding: utf-8 -*-
 """
+应用启动引导模块（P3-02 新增）。
+
+负责：
+1. 读取 config.yaml 日志配置并应用到 loguru
+2. 确保运行时目录存在
+3. 初始化会话数据库
+
+在 api.py startup() 中调用。
+"""
+
 from __future__ import annotations
 
-import importlib
-import types
-import warnings
-import logging
+import sys
+from loguru import logger
 
 
-def _ensure_ragged_compat() -> None:
-    """Ensure tf.ragged.RaggedTensorValue is available or mapped to compat.v1.
+def configure_logging():
+    """
+    根据 config.yaml 配置 loguru。
 
-    This helps older third-party code that references the deprecated symbol.
-    It's best-effort and will not raise on failure. Suppress warnings/logging
-    while performing the mapping to avoid emitting deprecation warnings.
+    解决原问题：config.yaml 定义了 logging 配置但代码未读取，
+    导致日志级别、格式、输出文件等配置不生效。
     """
     try:
-        tf_spec = importlib.util.find_spec('tensorflow')
-        if tf_spec is None:
-            return
-        try:
-            import tensorflow as tf  # type: ignore
-        except Exception:
-            return
-
-        # Temporarily suppress DeprecationWarning and TensorFlow logger output
-        tf_logger = logging.getLogger('tensorflow')
-        old_level = tf_logger.level
-        try:
-            with warnings.catch_warnings():
-                warnings.filterwarnings('ignore', category=DeprecationWarning, message='.*RaggedTensorValue.*')
-                tf_logger.setLevel(logging.ERROR)
-
-                # Ensure tf.ragged namespace exists
-                if not hasattr(tf, 'ragged'):
-                    tf.ragged = types.SimpleNamespace()
-
-                # If RaggedTensorValue is missing, prefer compat.v1 mapping
-                if not hasattr(tf.ragged, 'RaggedTensorValue'):
-                    mapped = None
-                    if hasattr(tf, 'compat') and hasattr(tf.compat, 'v1'):
-                        compat_v1 = getattr(tf.compat, 'v1')
-                        if hasattr(compat_v1, 'ragged') and hasattr(compat_v1.ragged, 'RaggedTensorValue'):
-                            mapped = compat_v1.ragged.RaggedTensorValue
-
-                    # Fallback: try to use tf.RaggedTensor class if available
-                    if mapped is None and hasattr(tf, 'RaggedTensor'):
-                        mapped = getattr(tf, 'RaggedTensor')
-
-                    if mapped is not None:
-                        setattr(tf.ragged, 'RaggedTensorValue', mapped)
-        finally:
-            tf_logger.setLevel(old_level)
+        from src.config import YAML_CONFIG
+        cfg = YAML_CONFIG.get("logging", {})
     except Exception:
-        # Swallow all exceptions; this is a best-effort compatibility layer
-        return
+        cfg = {}
+
+    level = cfg.get("level", "INFO")
+    fmt = cfg.get(
+        "format",
+        "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+        "<level>{level:<8}</level> | "
+        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+        "<level>{message}</level>",
+    )
+    log_file = cfg.get("file", "lottery_predict.log")
+
+    # 移除默认 handler，避免重复输出
+    logger.remove()
+
+    # 控制台输出
+    logger.add(sys.stderr, level=level, format=fmt)
+
+    # 文件输出（按天轮转，保留 7 天）
+    if log_file:
+        logger.add(
+            log_file,
+            rotation="1 day",
+            retention="7 days",
+            encoding="utf-8",
+            level=level,
+            format=fmt,
+        )
+
+    logger.info("日志系统初始化完成: 级别={}, 输出文件={}", level, log_file)
 
 
-_ensure_ragged_compat()
-
-
-def _ensure_keras_shim() -> None:
-    """If standalone `keras` is not installed, expose `keras` name pointing to `tf.keras`.
-
-    TensorFlow's lazy loader may attempt `import keras` when accessing `tf.keras`.
-    Creating a best-effort shim avoids ImportError in environments where only
-    `tensorflow` is installed.
+def bootstrap():
     """
-    try:
-        import importlib
-        import sys
-        import types
+    完整的应用启动引导流程。
 
-        # If keras is already importable, nothing to do
-        if importlib.util.find_spec("keras") is not None:
-            return
+    调用顺序：
+    1. configure_logging() — 初始化日志
+    2. ensure_runtime_directories() — 创建必要目录
+    3. _init_session_db() — 初始化会话数据库
+    """
+    configure_logging()
 
-        # Try to import tensorflow; if unavailable, skip
-        tf_spec = importlib.util.find_spec("tensorflow")
-        if tf_spec is None:
-            return
-        import tensorflow as tf  # type: ignore
+    from src.config import ensure_runtime_directories
+    ensure_runtime_directories()
 
-        if not hasattr(tf, "keras"):
-            return
+    from src.session import _get_conn
+    _get_conn()
 
-        # Create a lightweight stub module named 'keras' to satisfy import
-        # and basic version checks performed by TensorFlow's lazy loader.
-        # The stub intentionally does NOT delegate into tf.keras to avoid
-        # triggering recursive import logic in environments where tf.keras
-        # initialization itself tries to import `keras`.
-        fake = types.ModuleType("keras")
-        # Use a non-3.x version string to avoid Keras-3 specific branches.
-        fake.__version__ = getattr(tf, "__version__", "0.0.0")
-        fake.__name__ = "keras"
-        # Add a few common submodule placeholders so attribute access succeeds
-        fake.layers = types.ModuleType("keras.layers")
-        fake.models = types.ModuleType("keras.models")
-        fake.utils = types.ModuleType("keras.utils")
-        fake.backend = types.ModuleType("keras.backend")
-
-        sys.modules.setdefault("keras", fake)
-    except Exception:
-        # Best-effort only
-        return
-
-
-# Run the shim early
-_ensure_keras_shim()
+    logger.success("应用启动引导完成")

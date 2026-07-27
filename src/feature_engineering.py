@@ -5,10 +5,10 @@
 从原始开奖数据中提取机器学习特征，用于预测下一期号码。
 
 核心特征族：
-1. 热冷号特征：历史出现频次
+1. 热冷号特征：历史出现频次（已优化为滑动窗口 Counter，O(n)）
 2. 间隔特征：距离上次出现的期数
 3. 和值/跨度特征：号码总和的极差
-4. 奇偶/质合特征：号码组成结构
+4. 奇偶/质合特征：号码组成结构（质合已向量化）
 5. AC值：算术复杂度
 
 Author: Hermes Agent
@@ -28,6 +28,11 @@ from .config import LotteryModelConfig, get_lottery_config
 PRIMES_33 = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31}
 PRIMES_35 = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31}
 
+# 常量提取（P4-03）
+DEFAULT_MAX_SKIP = 100
+DEFAULT_MAX_INTERVAL = 50
+DEFAULT_HOT_WINDOW = 30
+
 
 def _get_primes(max_num: int) -> set:
     """获取 1-max_num 范围内的质数集合"""
@@ -40,24 +45,35 @@ def _get_primes(max_num: int) -> set:
 def compute_hot_cold_features(
     df: pd.DataFrame,
     config: LotteryModelConfig,
-    window: int = 30,
+    window: int = DEFAULT_HOT_WINDOW,
 ) -> pd.DataFrame:
     """
     计算热冷号特征。
 
     对于每期，统计最近 window 期内各号码出现的次数。
     输出特征：hot_count_1, hot_count_2, ..., hot_count_N (N=num_classes)
+
+    P1-03 优化：使用滑动窗口 Counter 替代每期全量重算，
+    复杂度从 O(n × window × num_classes) 降低到 O(n × sequence_len)。
     """
     red_balls = _extract_red_balls(df, config)
     num_classes = config.red.num_classes
 
-    # 对每个号码，计算最近 window 期的出现次数
     features = np.zeros((len(df), num_classes), dtype=np.float32)
+    counter = Counter()
 
     for i in range(len(df)):
-        start = max(0, i - window)
-        history = red_balls[start:i]  # 不包含当前期
-        counter = Counter(history.flatten())
+        # 移除滑出窗口的号码
+        if i > window:
+            old = red_balls[i - window - 1]
+            for b in old:
+                counter[b] -= 1
+                if counter[b] <= 0:
+                    del counter[b]
+        # 加入当前期新号码
+        for b in red_balls[i]:
+            counter[b] += 1
+        # 输出当前计数
         for num in range(1, num_classes + 1):
             features[i, num - 1] = counter.get(num, 0)
 
@@ -77,7 +93,7 @@ def compute_skip_features(
     """
     red_balls = _extract_red_balls(df, config)
     num_classes = config.red.num_classes
-    max_skip = 100
+    max_skip = DEFAULT_MAX_SKIP
 
     features = np.full((len(df), num_classes), max_skip, dtype=np.float32)
     last_seen = {num: max_skip for num in range(1, num_classes + 1)}
@@ -111,7 +127,7 @@ def compute_interval_features(
     """
     red_balls = _extract_red_balls(df, config)
     num_classes = config.red.num_classes
-    max_interval = 50
+    max_interval = DEFAULT_MAX_INTERVAL
 
     features = np.full((len(df), num_classes), max_interval, dtype=np.float32)
     positions = {num: [] for num in range(1, num_classes + 1)}
@@ -172,14 +188,13 @@ def compute_prime_composite_features(df: pd.DataFrame, config: LotteryModelConfi
     - prime_ratio: 质数占比
 
     注意：1 既不是质数也不是合数，这里算作合数。
+
+    P3-01 优化：使用 NumPy 向量化替代 Python 循环。
     """
     red_balls = _extract_red_balls(df, config)
     primes = _get_primes(config.red.num_classes)
-
-    prime_count = np.zeros(len(df), dtype=np.float32)
-    for i in range(len(df)):
-        prime_count[i] = sum(1 for x in red_balls[i] if x in primes)
-
+    prime_mask = np.isin(red_balls, np.array(list(primes)))
+    prime_count = prime_mask.sum(axis=1).astype(np.float32)
     composite_count = config.red.sequence_len - prime_count
     prime_ratio = prime_count / config.red.sequence_len
 
@@ -249,7 +264,7 @@ def _extract_red_balls(df: pd.DataFrame, config: LotteryModelConfig) -> np.ndarr
 def build_feature_matrix(
     df: pd.DataFrame,
     config: LotteryModelConfig,
-    hot_window: int = 30,
+    hot_window: int = DEFAULT_HOT_WINDOW,
 ) -> pd.DataFrame:
     """
     构建完整的特征矩阵。

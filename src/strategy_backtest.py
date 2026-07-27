@@ -179,21 +179,24 @@ def generate_ranking_report(
     code: str = "ssq",
     window_size: int = 200,
     n_backtest: Optional[int] = None,
+    df: Optional[pd.DataFrame] = None,
 ) -> RankingReport:
     """
-    便捷函数：生成策略排行榜。
+    ��ݺ��������ɲ������а�
 
     Args:
-        code: 彩票代码
-        window_size: 回测窗口
+        code: 彩Ĳ
+        window_size:，回测窗口
         n_backtest: 回测期数
+        df: 历史数据 DataFrame，若为 None 则从本地加载
 
     Returns:
         RankingReport
     """
     from .data_fetcher import load_history
 
-    df = load_history(code)
+    if df is None:
+        df = load_history(code)
     config = get_lottery_config(code)
     engine = StrategyBacktestEngine(config, window_size=window_size)
     return engine.run(df, n_backtest)

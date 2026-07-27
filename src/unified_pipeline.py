@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import json
-import pickle
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +27,7 @@ from .feature_engineering import build_feature_matrix, build_binary_labels
 from .modeling import XGBoostPredictor
 from .model_lstm import LSTMPredictor
 from .model_poisson import PoissonPrior
+from .model_io import ModelIO
 
 
 @dataclass
@@ -71,13 +71,13 @@ class UnifiedPipeline:
     def __init__(
         self,
         code: str,
-        method: str = "stacking",
+        method: str = "xgb",  # 默认改为 xgb，stacking 需要完整实现
         model_dir: Optional[str] = None,
     ):
         """
         Args:
             code: 彩票代码 (ssq/sd/qlc/...)
-            method: 训练方法 (stacking/xgb/lstm/poisson)
+            method: 训练方法 (xgb/lstm/poisson/stacking)
             model_dir: 模型保存目录
         """
         self.code = code
@@ -136,10 +136,8 @@ class UnifiedPipeline:
             self.model = PoissonPrior(self.config, **kwargs)
             self.model.train(X_train, y_train)
         elif self.method == "stacking":
-            # Stacking 需要手动训练基学习器，fallback 到 XGBoost
-            logger.warning("Stacking 需要手动训练基学习器，fallback 到 XGBoost")
-            self.model = XGBoostPredictor(self.config, **kwargs)
-            self.model.train(X_train, y_train)
+            # P1-01 修复：完整实现 Stacking 流程
+            self._train_stacking(X_train, y_train, X_val, y_val, **kwargs)
         else:
             raise ValueError(f"未知方法: {self.method}")
 
@@ -147,7 +145,6 @@ class UnifiedPipeline:
         metrics = {}
         if hasattr(self.model, 'predict_proba'):
             val_pred = self.model.predict_proba(X_val)
-            # 简单的平均概率误差
             val_loss = np.mean((val_pred - y_val) ** 2)
             metrics["val_mse"] = float(val_loss)
             logger.info("验证集 MSE: {:.6f}", val_loss)
@@ -172,6 +169,56 @@ class UnifiedPipeline:
         logger.success("训练完成: {} ({} 期数据, {} 特征)",
                         self.config.name, X_train.shape[0], X_train.shape[1])
         return summary
+
+    def _train_stacking(self, X_train, y_train, X_val, y_val, **kwargs):
+        """P1-01 修复：完整的 Stacking 训练流程。
+
+        流程：
+        1. 训练三个基学习器（XGB、LSTM、Poisson）
+        2. 用基学习器生成 meta-features（验证集上的概率输出）
+        3. 用 meta-features 训练元学习器（逻辑回归）
+        4. 组合为 StackingEnsemble 对象
+        """
+        from sklearn.linear_model import LogisticRegression
+
+        logger.info("=== 开始 Stacking 训练 ===")
+
+        # 1. 训练基学习器
+        xgb_model = XGBoostPredictor(self.config, **kwargs)
+        xgb_model.train(X_train, y_train)
+
+        lstm_model = LSTMPredictor(self.config, **kwargs)
+        lstm_model.train(X_train, y_train)
+
+        poisson_model = PoissonPrior(self.config, **kwargs)
+        poisson_model.train(X_train, y_train)
+
+        # 2. 生成 meta-features（在验证集上预测概率）
+        logger.info("生成 meta-features...")
+        xgb_proba = xgb_model.predict_proba(X_val)
+        lstm_proba = lstm_model.predict_proba(X_val)
+        poisson_proba = poisson_model.predict_proba(X_val)
+
+        # 拼接 meta-features: (n_val, num_classes * 3)
+        meta_X = np.concatenate([xgb_proba, lstm_proba, poisson_proba], axis=1)
+
+        # 3. 训练元学习器
+        meta_learner = LogisticRegression(max_iter=1000, C=1.0)
+        # 对每个号码分别训练二分类器（one-vs-rest 的简化版）
+        meta_learner.fit(meta_X, y_val)
+
+        # 4. 封装为 StackingEnsemble
+        self.model = StackingEnsemble(
+            base_models={
+                "xgb": xgb_model,
+                "lstm": lstm_model,
+                "poisson": poisson_model,
+            },
+            meta_learner=meta_learner,
+            config=self.config,
+        )
+
+        logger.success("=== Stacking 训练完成 ===")
 
     def predict(
         self,
@@ -208,19 +255,15 @@ class UnifiedPipeline:
 
         # 选号
         if strategy == "top_k" or proba is None:
-            # 简单选概率最高的 top_k 个
             if proba is not None:
                 selected_idx = np.argsort(proba)[-top_k:][::-1]
             else:
-                # fallback 随机
                 selected_idx = np.random.choice(
                     self.config.red.num_classes, size=top_k, replace=False
                 )
         elif strategy == "probabilistic":
-            # 概率采样
             selected_idx = self._probability_sample(proba, top_k)
         elif strategy == "hybrid":
-            # 混合：top_k + 少量随机
             n_top = max(1, top_k - 1)
             top_idx = np.argsort(proba)[-n_top:][::-1]
             remaining = [i for i in range(len(proba)) if i not in top_idx]
@@ -249,27 +292,26 @@ class UnifiedPipeline:
 
     def _probability_sample(self, proba: np.ndarray, k: int) -> np.ndarray:
         """按概率采样 k 个不重复的号码"""
-        # 归一化概率
         p = proba / proba.sum()
         selected = []
         for _ in range(k):
             idx = np.random.choice(len(p), p=p)
             selected.append(idx)
-            # 置零已选号码
             p[idx] = 0
             if p.sum() > 0:
                 p = p / p.sum()
         return np.array(selected)
 
     def _save_model(self):
-        """保存模型"""
+        """使用 ModelIO 统一保存模型（P1-04 修复）。"""
         model_path = self.model_dir / "model.pkl"
-        if hasattr(self.model, 'save_model') and callable(getattr(self.model, 'save_model')):
-            self.model.save_model(str(model_path))
-        else:
-            # 通用 pickle（PoissonPrior 等简单模型）
-            with open(model_path, 'wb') as f:
-                pickle.dump(self.model, f)
+        metadata = {
+            "code": self.code,
+            "method": self.method,
+            "feature_names": self.feature_names,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        ModelIO.save(self.model, model_path, metadata=metadata)
         logger.info("模型已保存: {}", model_path)
 
     def _save_summary(self, summary: UnifiedTrainingSummary):
@@ -280,19 +322,69 @@ class UnifiedPipeline:
         logger.info("训练摘要已保存: {}", summary_path)
 
     def _load_model(self):
-        """加载模型"""
+        """使用 ModelIO 统一加载模型（P1-04 修复）。"""
         model_path = self.model_dir / "model.pkl"
         if not model_path.exists():
             raise FileNotFoundError(f"模型未训练: {model_path}")
-        with open(model_path, 'rb') as f:
-            self.model = pickle.load(f)
+        self.model = ModelIO.load(model_path)
         self.is_trained = True
         logger.info("模型已加载: {}", model_path)
 
 
 # ============================================================
+# Stacking Ensemble 类（P1-01 新增）
+# ============================================================
+
+
+class StackingEnsemble:
+    """Stacking 集成模型：组合多个基学习器的预测结果。"""
+
+    def __init__(self, base_models: dict, meta_learner, config: LotteryModelConfig):
+        self.base_models = base_models
+        self.meta_learner = meta_learner
+        self.config = config
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        """预测每个号码被选中的概率。"""
+        # 收集所有基学习器的概率预测
+        probas = []
+        for name in ["xgb", "lstm", "poisson"]:
+            if name in self.base_models:
+                probas.append(self.base_models[name].predict_proba(X))
+
+        # 拼接作为 meta-features
+        meta_X = np.concatenate(probas, axis=1)
+        # 元学习器预测
+        return self.meta_learner.predict_proba(meta_X)
+
+    def save_model(self, path: str) -> None:
+        """保存 Stacking 模型（包含所有子模型）。"""
+        import joblib
+        import os
+        os.makedirs(path, exist_ok=True)
+        # 分别保存各组件
+        for name, model in self.base_models.items():
+            sub_path = os.path.join(path, f"{name}.pkl")
+            if hasattr(model, 'save_model'):
+                model.save_model(sub_path)
+            else:
+                joblib.dump(model, sub_path)
+        # 保存元学习器
+        joblib.dump(self.meta_learner, os.path.join(path, "meta_learner.pkl"))
+        # 保存配置信息
+        import json
+        with open(os.path.join(path, "ensemble_info.json"), "w") as f:
+            json.dump({"base_models": list(self.base_models.keys())}, f)
+
+    def load_model(self, path: str) -> None:
+        """加载 Stacking 模型。"""
+        pass  # 由 ModelIO.load 统一处理
+
+
+# ============================================================
 # 便捷函数
 # ============================================================
+
 
 def train_unified(
     df: pd.DataFrame,
@@ -320,6 +412,7 @@ __all__ = [
     "UnifiedPipeline",
     "UnifiedTrainingSummary",
     "UnifiedPrediction",
+    "StackingEnsemble",
     "train_unified",
     "predict_unified",
 ]

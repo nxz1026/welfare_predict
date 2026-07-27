@@ -13,8 +13,8 @@ def test_build_sequence_model_trains_and_predicts():
         hidden_units=(8,),
         dropout=0.1,
     )
-    model = build_sequence_model(spec, window_size=2, learning_rate=1e-3, name="test_lstm")
-    x = np.random.randint(0, spec.num_classes, size=(12, 2, spec.sequence_len))
+    model = build_sequence_model(spec, window_size=3, learning_rate=1e-3, name="test_lstm")
+    x = np.random.randint(0, spec.num_classes, size=(12, 3, spec.sequence_len))
     y = np.random.randint(0, spec.num_classes, size=(12, spec.sequence_len))
     history = model.fit(x, y, epochs=1, batch_size=4, verbose=0)
 

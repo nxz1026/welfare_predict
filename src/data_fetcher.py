@@ -5,7 +5,7 @@
 特点：
 1. 使用带重试的 requests.Session，满足网络安全要求；
 2. 输出 Pandas DataFrame，供预处理与训练使用；
-3. 针对快乐8（kl8）提供顺序版与常规版两种下载模式。
+3. 支持多种彩种的数据下载（ssq/dlt/pls/qxc/sd/qlc）。
 """
 
 from __future__ import annotations
@@ -86,8 +86,6 @@ def _build_history_url(config: LotteryModelConfig, start: Optional[int], end: Op
     base = f"https://datachart.500.com/{config.code}/history/"
     if config.code in {"qxc", "pls", "sd", "ssq", "dlt"}:
         path = "inc/history.php"
-    elif config.code == "kl8":
-        path = "newinc/jbzs_redblue.php"
     else:
         path = "history.shtml"
 
@@ -104,7 +102,7 @@ def _build_history_url(config: LotteryModelConfig, start: Optional[int], end: Op
 def _parse_issue_list(config: LotteryModelConfig, html: str) -> pd.DataFrame:
     soup = BeautifulSoup(html, "lxml")
     rows = []
-    if config.code in {"ssq", "dlt", "kl8"}:
+    if config.code in {"ssq", "dlt"}:
         tbody = soup.find("tbody", attrs={"id": "tdata"})
         if not tbody:
             raise ValueError("未找到开奖号码数据表格 (id=tdata)")
@@ -136,10 +134,10 @@ def _parse_issue_list(config: LotteryModelConfig, html: str) -> pd.DataFrame:
             digits = tds[1].get_text(strip=True).split(" ")
             for idx, value in enumerate(digits):
                 record[f"红球_{idx + 1}"] = value
-        elif config.code == "kl8":
-            numbers = [td.get_text(strip=True) for td in tds if td.get_text(strip=True).isdigit()]
-            for idx, value in enumerate(numbers):
-                record[f"红球_{idx + 1}"] = value
+        elif config.code == "qlc":
+            for idx in range(config.red.sequence_len):
+                record[f"红球_{idx + 1}"] = tds[idx + 1].get_text(strip=True)
+        # NOTE: kl8 已迁移至独立项目 (2025-10)，此处不再处理
         rows.append(record)
 
     if not rows:
@@ -147,8 +145,6 @@ def _parse_issue_list(config: LotteryModelConfig, html: str) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     df.sort_values("期数", ascending=False, inplace=True)
     return df.reset_index(drop=True)
-
-
 
 
 def get_current_issue(code: str, client: Optional[LotteryHttpClient] = None) -> str:
@@ -164,17 +160,12 @@ def get_current_issue(code: str, client: Optional[LotteryHttpClient] = None) -> 
 
     if cfg.code in {"qxc", "pls", "sd"}:
         url = f"https://datachart.500.com/{cfg.code}/history/inc/history.php"
-    elif cfg.code == "kl8":
-        url = f"https://datachart.500.com/{cfg.code}/history/newinc/jbzs_redblue.php"
     else:
         url = f"https://datachart.500.com/{cfg.code}/history/history.shtml"
 
     html = client.get_text(url)
     soup = BeautifulSoup(html, "lxml")
-    if cfg.code == "kl8":
-        value = soup.find("div", class_="wrap_datachart").find("input", {"id": "to"})["value"]
-    else:
-        value = soup.find("div", class_="wrap_datachart").find("input", {"id": "end"})["value"]
+    value = soup.find("div", class_="wrap_datachart").find("input", {"id": "end"})["value"]
     logger.info("【{}】最新期号: {}", cfg.name, value)
     return value
 
@@ -197,13 +188,22 @@ def download_history(
         user_agent=NETWORK_CONFIG["user_agent"],
     )
 
-    if cfg.code == "kl8" and use_sequence_order:
-        raise NotImplementedError("KL8相关功能已迁移至独立项目：https://github.com/KittenCN/kl8-lottery-analyzer")
-    else:
-        url = _build_history_url(cfg, start, end)
-        logger.info("下载【{}】历史数据: {}", cfg.name, url)
-        html = client.get_text(url)
-        df = _parse_issue_list(cfg, html)
+    # P2-01: kl8 已迁移，直接抛出明确错误
+    if code == "kl8":
+        raise NotImplementedError(
+            "KL8（快乐8）相关功能已于 2025-10 迁移至独立项目。"
+            "请访问 https://github.com/KittenCN/kl8-lottery-analyzer"
+        )
+    elif use_sequence_order:
+        raise NotImplementedError(
+            f"{cfg.name} 不支持顺序模式（use_sequence_order），"
+            "该功能仅适用于已迁移的 KL8 项目"
+        )
+
+    url = _build_history_url(cfg, start, end)
+    logger.info("下载【{}】历史数据: {}", cfg.name, url)
+    html = client.get_text(url)
+    df = _parse_issue_list(cfg, html)
 
     save_dir = PATHS["data"] / cfg.code
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -242,4 +242,3 @@ __all__ = [
     "get_current_issue",
     "load_history",
 ]
-

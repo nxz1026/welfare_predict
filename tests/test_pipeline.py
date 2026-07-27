@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.config import LOTTERY_CONFIGS, LotteryModelConfig, SequenceModelSpec
+from src.config import LOTTERY_CONFIGS, LotteryModelConfig, SequenceModelSpec, DEFAULT_DATA_SOURCE
 from src.pipeline import load_trained_models, predict_next_draw, train_lottery_models
 
 
@@ -56,6 +56,7 @@ def test_train_and_predict_pipeline(monkeypatch, tmp_path):
     # 替换 ssq 配置为轻量级版本，保证测试速度
     tiny_cfg = build_tiny_config()
     monkeypatch.setitem(LOTTERY_CONFIGS, "ssq", tiny_cfg)
+    monkeypatch.setattr("src.config.DEFAULT_DATA_SOURCE", "local")
     data_path = tmp_path / "data" / "ssq" / "data.csv"
     create_fake_dataset(data_path, rows=12)
 

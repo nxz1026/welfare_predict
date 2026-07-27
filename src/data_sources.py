@@ -57,8 +57,14 @@ class Web500Source(DataSource):
     """500.com 网页抓取"""
 
     def __init__(self):
+        from .config import NETWORK_CONFIG
         from .data_fetcher import LotteryHttpClient
-        self.client = LotteryHttpClient(timeout=30, retries=3, backoff_factor=0.6)
+        self.client = LotteryHttpClient(
+            timeout=NETWORK_CONFIG["timeout"],
+            retries=NETWORK_CONFIG["retry_count"],
+            backoff_factor=NETWORK_CONFIG.get("backoff_factor", 0.6),
+            user_agent=NETWORK_CONFIG["user_agent"],
+        )
 
     def get_name(self) -> str:
         return "500.com"
@@ -165,8 +171,11 @@ class DataSourceManager:
 
     def _register_defaults(self):
         """注册默认数据源"""
-        self.register(Web500Source())
+        web500 = Web500Source()
+        self.register(web500)
         self.register(LocalCSVSource())
+        # fivehundred 作为 500.com 的别名
+        self._sources["fivehundred"] = web500
 
         # 如果有 API key，注册天行数据
         if os.getenv("TIANYAN_API_KEY"):
@@ -211,6 +220,30 @@ class DataSourceManager:
         raise ValueError(f"所有数据源均失败: {sources}")
 
 
+def fetch_history(
+    code: str,
+    start_issue: Optional[int] = None,
+    end_issue: Optional[int] = None,
+    source: str = "fivehundred",
+) -> pd.DataFrame:
+    """从指定数据源获取历史数据。"""
+    manager = DataSourceManager()
+    src = manager.get_source(source)
+    return src.fetch_history(code, start_issue, end_issue)
+
+
+def fetch_latest_issue(code: str) -> str:
+    """获取指定彩票的最新期号。"""
+    from .data_fetcher import get_current_issue
+    return get_current_issue(code)
+
+
+def get_source(name: str) -> DataSource:
+    """按名称获取数据源实例。"""
+    manager = DataSourceManager()
+    return manager.get_source(name)
+
+
 __all__ = [
     "DataSource",
     "Web500Source",
@@ -218,4 +251,7 @@ __all__ = [
     "LocalCSVSource",
     "DataSourceManager",
     "FetchResult",
+    "fetch_history",
+    "fetch_latest_issue",
+    "get_source",
 ]

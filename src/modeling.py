@@ -15,12 +15,13 @@ XGBoost 基学习器（二分类方案）。
 from __future__ import annotations
 
 import numpy as np
+import tensorflow as tf
 from typing import Dict, List, Optional
 
 import xgboost as xgb
 from loguru import logger
 
-from .config import LotteryModelConfig
+from .config import LotteryModelConfig, SequenceModelSpec
 
 
 class XGBoostPredictor:
@@ -161,4 +162,58 @@ class XGBoostPredictor:
         return model
 
 
-__all__ = ["XGBoostPredictor"]
+def build_sequence_model(
+    spec: SequenceModelSpec,
+    window_size: int = 5,
+    learning_rate: float = 0.001,
+    name: str = "sequence_model",
+) -> tf.keras.Model:
+    """构建用于序列预测的 LSTM 模型（用于测试与快速原型）。"""
+    inputs = tf.keras.layers.Input(
+        shape=(window_size, spec.sequence_len), name=f"{name}_input"
+    )
+    x = inputs
+    for i, units in enumerate(spec.hidden_units):
+        return_sequences = True
+        x = tf.keras.layers.LSTM(
+            units,
+            return_sequences=return_sequences,
+            dropout=spec.dropout,
+            name=f"{name}_lstm_{i}",
+        )(x)
+    x = tf.keras.layers.TimeDistributed(
+        tf.keras.layers.Dense(spec.num_classes, activation="softmax"),
+        name=f"{name}_output",
+    )(x)
+    model = tf.keras.Model(inputs=inputs, outputs=x, name=name)
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
+        loss="sparse_categorical_crossentropy",
+        metrics=["accuracy"],
+    )
+    return model
+
+
+def build_models_for_lottery(
+    config: LotteryModelConfig, window_size: int
+) -> Dict[str, tf.keras.Model]:
+    """为红球和蓝球分别构建序列模型。"""
+    models: Dict[str, tf.keras.Model] = {}
+    red_spec = config.red
+    models["red"] = build_sequence_model(
+        red_spec,
+        window_size=window_size,
+        learning_rate=config.learning_rate,
+        name=f"{config.code}_red",
+    )
+    if config.blue:
+        models["blue"] = build_sequence_model(
+            config.blue,
+            window_size=window_size,
+            learning_rate=config.learning_rate,
+            name=f"{config.code}_blue",
+        )
+    return models
+
+
+__all__ = ["XGBoostPredictor", "build_sequence_model", "build_models_for_lottery"]

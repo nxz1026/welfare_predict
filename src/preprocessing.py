@@ -30,7 +30,7 @@ def _needs_offset(values: np.ndarray, spec: SequenceModelSpec) -> bool:
     if values.size == 0:
         return False
     arr = values.astype(int)
-    return arr.min() >= 1 and arr.max() <= spec.num_classes
+    return bool(arr.min() >= 1 and arr.max() <= spec.num_classes)
 
 
 def _to_zero_based(values: np.ndarray, shift: bool) -> np.ndarray:
@@ -75,14 +75,16 @@ def prepare_training_arrays(
 
 
 def train_validation_split(
-    x: np.ndarray,
-    y: np.ndarray,
+    x,
+    y,
     validation_ratio: float = 0.1,
 ) -> Tuple[Tuple[np.ndarray, np.ndarray], Tuple[np.ndarray, np.ndarray]]:
     """将窗口数据按比例划分训练与验证集合。"""
 
     if not 0 < validation_ratio < 1:
-        raise ValueError("validation_ratio 必须介于 (0, 1) 之间")
+        raise ValueError("validation_ratio must be between 0 and 1")
+    x = np.asarray(x)
+    y = np.asarray(y)
     total = x.shape[0]
     split_index = max(1, int(total * (1 - validation_ratio)))
     if split_index >= total:

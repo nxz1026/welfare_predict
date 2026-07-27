@@ -1,12 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-LSTM 基学习器。
+MLP/DNN 基学习器（原 LSTM 重构）。
 
-使用 TensorFlow/Keras 构建多层 LSTM 模型。
-采用二分类方案：33 个号码每个预测一个概率，最后取 top-6。
+P1-02 修复说明：
+原始实现将高维统计特征 reshape 为 (N, 1, D)，使 LSTM 退化为 Dense 层，
+因为时间步=1 时 LSTM 无法学到任何时序模式。
 
-ponytail: 单模型多输出（非 33 个独立模型），共享 LSTM 特征提取层。
-升级路径：如果 LSTM 表现不佳，可尝试 GRU 或减少层数。
+重构方案：
+- 输入已经是 feature_engineering 的高维统计特征（非时序原始序列）
+- 此类场景下 MLP/DNN 比 LSTM 更合适
+- 保留类名兼容性（LSTMPredictor），内部改为 MLP 架构
+
+如果未来需要真正的时序建模，应在 preprocessing 阶段构建窗口序列特征，
+而非在此处用 reshape 强行适配。
 """
 
 from __future__ import annotations
@@ -22,13 +28,16 @@ from .config import LotteryModelConfig
 
 class LSTMPredictor:
     """
-    LSTM 基学习器（单模型多输出）。
+    MLP/DNN 基学习器（单模型多输出）。
+
+    注意：虽然类名仍为 LSTMPredictor 以保持 API 兼容，
+    但内部架构已从 LSTM 重构为 MLP，因为输入是高维统计特征而非时序序列。
     """
 
     def __init__(
         self,
         config: LotteryModelConfig,
-        lstm_units: list = [64, 32],
+        hidden_units: list = [256, 128, 64],
         dropout: float = 0.3,
         learning_rate: float = 0.001,
         batch_size: int = 32,
@@ -40,30 +49,29 @@ class LSTMPredictor:
         self.model: Optional[tf.keras.Model] = None
         self.is_trained = False
 
-        self.lstm_units = lstm_units
+        self.hidden_units = hidden_units
         self.dropout = dropout
         self.learning_rate = learning_rate
         self.batch_size = batch_size
         self.epochs = epochs
 
     def _build_model(self, input_shape: tuple) -> tf.keras.Model:
-        """构建 LSTM 模型"""
-        inputs = tf.keras.layers.Input(shape=input_shape, name="lstm_input")
+        """构建 MLP 模型（替代原来的 LSTM）。"""
+        inputs = tf.keras.layers.Input(shape=input_shape, name="mlp_input")
 
         x = inputs
-        for i, units in enumerate(self.lstm_units):
-            return_sequences = i < len(self.lstm_units) - 1
-            x = tf.keras.layers.LSTM(
+        for i, units in enumerate(self.hidden_units):
+            x = tf.keras.layers.Dense(
                 units,
-                return_sequences=return_sequences,
-                dropout=self.dropout,
-                name=f"lstm_{i}",
+                activation="relu",
+                name=f"dense_{i}",
             )(x)
+            x = tf.keras.layers.BatchNormalization(name=f"bn_{i}")(x)
+            x = tf.keras.layers.Dropout(self.dropout, name=f"dropout_{i}")(x)
 
-        x = tf.keras.layers.Dropout(self.dropout, name="dropout")(x)
         x = tf.keras.layers.Dense(self.num_classes, activation="sigmoid", name="output")(x)
 
-        model = tf.keras.Model(inputs=inputs, outputs=x, name="lottery_lstm")
+        model = tf.keras.Model(inputs=inputs, outputs=x, name="lottery_mlp")
         model.compile(
             optimizer=tf.keras.optimizers.Adam(learning_rate=self.learning_rate),
             loss="binary_crossentropy",
@@ -73,19 +81,16 @@ class LSTMPredictor:
 
     def train(self, X: np.ndarray, y: np.ndarray) -> None:
         """
-        训练 LSTM 模型。
+        训练 MLP 模型。
 
         Args:
             X: (n_samples, n_features) 特征矩阵
             y: (n_samples, num_classes) 二值标签矩阵
         """
-        logger.info("训练 LSTM 模型")
+        logger.info("训练 MLP 模型 (输入维度: {}, 输出维度: {})", X.shape[1], y.shape[1])
 
-        # 为 LSTM 增加时间维度：reshape 为 (n_samples, 1, n_features)
-        # 这样 LSTM 可以学习特征间的时序模式
-        X_lstm = X.reshape(X.shape[0], 1, X.shape[1])
-
-        self.model = self._build_model((1, X.shape[1]))
+        # 直接使用特征矩阵，无需 reshape（P1-02 修复）
+        self.model = self._build_model((X.shape[1],))
         self.model.summary(print_fn=logger.debug)
 
         callbacks = [
@@ -103,7 +108,7 @@ class LSTMPredictor:
         ]
 
         self.model.fit(
-            X_lstm,
+            X,
             y,
             batch_size=self.batch_size,
             epochs=self.epochs,
@@ -112,7 +117,7 @@ class LSTMPredictor:
         )
 
         self.is_trained = True
-        logger.success("LSTM 训练完成")
+        logger.success("MLP 训练完成")
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         """
@@ -127,8 +132,8 @@ class LSTMPredictor:
         if not self.is_trained:
             raise RuntimeError("模型未训练")
 
-        X_lstm = X.reshape(X.shape[0], 1, X.shape[1])
-        return self.model.predict(X_lstm, verbose=0)
+        # 直接输入，无需 reshape（P1-02 修复）
+        return self.model.predict(X, verbose=0)
 
     def predict(self, X: np.ndarray, top_k: Optional[int] = None) -> np.ndarray:
         """
@@ -153,13 +158,13 @@ class LSTMPredictor:
     def save_model(self, path: str) -> None:
         """保存模型"""
         self.model.save(path)
-        logger.info("LSTM 模型已保存: {}", path)
+        logger.info("MLP 模型已保存: {}", path)
 
     def load_model(self, path: str) -> None:
         """加载模型"""
         self.model = tf.keras.models.load_model(path)
         self.is_trained = True
-        logger.info("LSTM 模型已加载: {}", path)
+        logger.info("MLP 模型已加载: {}", path)
 
 
 __all__ = ["LSTMPredictor"]

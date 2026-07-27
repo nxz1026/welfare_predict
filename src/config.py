@@ -71,8 +71,8 @@ NETWORK_CONFIG = {
     "backoff_factor": YAML_CONFIG.get("network", {}).get("backoff_factor", 0.6),
     "user_agent": YAML_CONFIG.get("network", {}).get(
         "user_agent",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/126.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
     ),
 }
 
@@ -95,6 +95,9 @@ if isinstance(_sources_yaml, dict):
 DEFAULT_DATA_SOURCE = DATA_SOURCE_CONFIG["default"]
 
 
+# ============================================================
+# 彩种配置（P2-01: 已移除 kl8，已迁移至独立项目）
+# ============================================================
 LOTTERY_CONFIGS: Dict[str, LotteryModelConfig] = {
     "ssq": LotteryModelConfig(
         code="ssq",
@@ -176,24 +179,8 @@ LOTTERY_CONFIGS: Dict[str, LotteryModelConfig] = {
         default_blue_epochs=0,
         learning_rate=6e-4,
     ),
-    "kl8": LotteryModelConfig(
-        code="kl8",
-        name="快乐8",
-        red=SequenceModelSpec(
-            sequence_len=20,
-            num_classes=80,
-            embedding_dim=48,
-            hidden_units=(128, 128, 64),
-            dropout=0.35,
-        ),
-        blue=None,
-        default_window=6,
-        default_batch_size=48,
-        default_red_epochs=40,
-        default_blue_epochs=0,
-        learning_rate=5e-4,
-        allow_sequence_order=True,
-    ),
+    # NOTE: kl8（快乐8）已于 2025-10 迁移至独立项目，此处已移除。
+    # 如需恢复请查看 git tag v2.0-pre-kl8-cleanup
     "sd": LotteryModelConfig(
         code="sd",
         name="福彩3D",
@@ -247,6 +234,7 @@ def get_lottery_config(code: str) -> LotteryModelConfig:
     return LOTTERY_CONFIGS[normalized]
 
 
+# 路径映射字典（供外部使用）
 name_path = {
     code: {
         "name": cfg.name,

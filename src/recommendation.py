@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -33,7 +33,7 @@ class StrategyResult:
     strategy_name: str
     red_balls: List[int]  # 6 个红球 (1-based)
     blue_ball: Optional[int]  # 蓝球 (1-based)
-    analysis: Dict[str, any]  # 分析摘要
+    analysis: Dict[str, Any]  # 分析摘要（P2-03: any → Any）
     confidence_note: str  # 置信度说明
 
 
@@ -56,7 +56,7 @@ class ConservativeStrategy:
     选近期出现频率最高的号码（热号）。
     """
 
-    name = "保守型"
+    name = "conservative"
 
     def __init__(self, config: LotteryModelConfig):
         self.config = config
@@ -64,7 +64,7 @@ class ConservativeStrategy:
     def _select_blue(self, df: pd.DataFrame) -> int:
         """蓝球：选近期热号"""
         recent = df.tail(30)
-        blue_counts = {}
+        blue_counts: Dict[int, int] = {}
         for _, row in recent.iterrows():
             b = int(row.get("蓝球_1", 0))
             if 1 <= b <= self.config.blue.num_classes:
@@ -76,7 +76,7 @@ class ConservativeStrategy:
     def generate(
         self,
         df: pd.DataFrame,
-        analysis: Dict[str, any],
+        analysis: Dict[str, Any],  # P2-03: any → Any
     ) -> StrategyResult:
         hot_cold_df = compute_hot_cold_features(df, self.config)
         # 取最后一行的当前热度值 (Series, 33 个值)
@@ -115,15 +115,33 @@ class AggressiveStrategy:
     选长期遗漏（skip 值最高）的号码。
     """
 
-    name = "激进型"
+    name = "aggressive"
 
     def __init__(self, config: LotteryModelConfig):
         self.config = config
 
+    def _select_blue(self, df: pd.DataFrame) -> int:
+        """
+        蓝球：选遗漏最大的。
+
+        P1-03 优化：使用向量化操作替代逐行反向扫描，
+        时间复杂度从 O(n × blue_range) 降低到 O(n)。
+        """
+        recent = df.tail(50)
+        blue_col = "蓝球_1"
+        if blue_col in recent.columns:
+            blue_values = recent[blue_col].astype(int)
+            counts = blue_values.value_counts()
+            valid = counts[(counts.index >= 1) & (counts.index <= self.config.blue.num_classes)]
+            if len(valid) > 0:
+                # 选择频率最低的（即遗漏最大的）
+                return valid.idxmin()
+        return random.randint(1, self.config.blue.num_classes)
+
     def generate(
         self,
         df: pd.DataFrame,
-        analysis: Dict[str, any],
+        analysis: Dict[str, Any],  # P2-03: any → Any
     ) -> StrategyResult:
         skip_df = compute_skip_features(df, self.config)
         skip = skip_df.iloc[-1] if isinstance(skip_df, pd.DataFrame) else skip_df
@@ -132,17 +150,8 @@ class AggressiveStrategy:
         selected_idx = np.argsort(skip.values)[-6:]
         red_balls = sorted([int(i + 1) for i in selected_idx])
 
-        # 蓝球：选遗漏最大的
-        blue_skip = {}
-        for num in range(1, self.config.blue.num_classes + 1):
-            last_seen = None
-            for idx in range(len(df) - 1, -1, -1):
-                if int(df.iloc[idx].get("蓝球_1", 0)) == num:
-                    last_seen = len(df) - 1 - idx
-                    break
-            if last_seen is not None:
-                blue_skip[num] = last_seen
-        blue_ball = max(blue_skip, key=blue_skip.get) if blue_skip else random.randint(1, self.config.blue.num_classes)
+        # 蓝球：选遗漏最大的（使用优化后的方法）
+        blue_ball = self._select_blue(df)
 
         return StrategyResult(
             strategy_name=self.name,
@@ -162,7 +171,7 @@ class BalancedStrategy:
     选号和值接近历史均值、奇偶比接近 3:3、AC 值居中的组合。
     """
 
-    name = "平衡型"
+    name = "balanced"
 
     def __init__(self, config: LotteryModelConfig):
         self.config = config
@@ -170,7 +179,7 @@ class BalancedStrategy:
     def generate(
         self,
         df: pd.DataFrame,
-        analysis: Dict[str, any],
+        analysis: Dict[str, Any],  # P2-03: any → Any
     ) -> StrategyResult:
         # 从概率均匀分布出发，微调满足约束
         avg_sum = analysis.get("avg_sum", 100)
@@ -217,7 +226,7 @@ class MysticStrategy:
     融入用户提供的"幸运数字"，如果没有则用经典吉利数字。
     """
 
-    name = "玄学型"
+    name = "mystic"
 
     def __init__(self, config: LotteryModelConfig):
         self.config = config
@@ -225,7 +234,7 @@ class MysticStrategy:
     def generate(
         self,
         df: pd.DataFrame,
-        analysis: Dict[str, any],
+        analysis: Dict[str, Any],  # P2-03: any → Any
         lucky_numbers: Optional[List[int]] = None,
     ) -> StrategyResult:
         # 经典吉利数字（中国文化）
@@ -240,7 +249,7 @@ class MysticStrategy:
         remaining = [n for n in range(1, self.config.red.num_classes + 1) if n not in lucky_part]
         random_part = random.sample(
             remaining,
-            min(3, self.config.red.num_classes - len(lucky_part))
+            min(3, self.config.red.num_classes - len(lucky_part)),
         )
 
         red_balls = sorted(lucky_part + random_part)
@@ -259,7 +268,7 @@ class MysticStrategy:
             confidence_note="基于幸运数字组合",
         )
 
-    def _get_elements(self) -> Dict[str, int]:
+    def _get_elements(self) -> Dict[str, str]:
         """五行属性对应"""
         return {
             "金": "4, 9, 14, 19, 24, 29",
@@ -289,7 +298,7 @@ class RecommendationEngine:
             "mystic": MysticStrategy(self.config),
         }
 
-    def _compute_analysis(self, df: pd.DataFrame) -> Dict[str, any]:
+    def _compute_analysis(self, df: pd.DataFrame) -> Dict[str, Any]:  # P2-03: any → Any
         """计算分析数据"""
         red_cols = ["红球_1", "红球_2", "红球_3", "红球_4", "红球_5", "红球_6"]
 
@@ -299,7 +308,7 @@ class RecommendationEngine:
             sums.append(s)
 
         return {
-            "avg_sum": np.mean(sums) if sums else 100,
+            "avg_sum": float(np.mean(sums)) if sums else 100.0,
             "max_sum": max(sums) if sums else 0,
             "min_sum": min(sums) if sums else 0,
             "total_issues": len(df),
