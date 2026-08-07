@@ -25,9 +25,11 @@ from .feature_engineering import build_feature_matrix, build_binary_labels
 
 # ============================================================
 # 奖金常量（P4-03：从魔法数字提取为命名常量）
+# P1-06：按彩种分派奖级判定与奖金表
 # ============================================================
 
-PRIZE_MONEY: Dict[int, float] = {
+# --- 双色球 (ssq) 奖金表 ---
+SSQ_PRIZE_MONEY: Dict[int, float] = {
     1: 5_000_000.0,   # 一等奖（6+1，浮动奖金取近似值）
     2: 100_000.0,     # 二等奖（6+0，浮动奖金取近似值）
     3: 3_000.0,       # 三等奖（5+1，固定奖金）
@@ -36,12 +38,68 @@ PRIZE_MONEY: Dict[int, float] = {
     6: 5.0,           # 六等奖（2+1 或 1+1 或 0+1，固定奖金）
 }
 
+# --- 大乐透 (dlt) 奖金表 ---
+DLT_PRIZE_MONEY: Dict[int, float] = {
+    1: 5_000_000.0,   # 一等奖（5+2）
+    2: 100_000.0,     # 二等奖（5+1）
+    3: 10_000.0,      # 三等奖（5+0 或 4+2）
+    4: 3_000.0,       # 四等奖（4+1 或 3+2）
+    5: 500.0,         # 五等奖（4+0 或 3+1 或 2+2）
+    6: 200.0,         # 六等奖（3+0 或 2+1 或 1+2）
+    7: 100.0,         # 七等奖（2+0 或 1+1 或 0+2）
+    8: 15.0,          # 八等奖（1+0 或 0+1）
+    9: 5.0,           # 九等奖（0+0 但追加）
+}
+
+# --- 排列三 (pls) / 福彩3D (sd) 奖金表 ---
+DIGIT3_PRIZE_MONEY: Dict[int, float] = {
+    1: 1_000.0,       # 直选（3 位全中且顺序一致）
+    2: 320.0,         # 组三（3 位中 2 个不同数字）
+    3: 160.0,         # 组六（3 位全中但顺序不同）
+}
+
+# --- 七星彩 (qxc) 奖金表 ---
+QXC_PRIZE_MONEY: Dict[int, float] = {
+    1: 5_000_000.0,   # 一等奖（7 位全中）
+    2: 50_000.0,      # 二等奖（后 6 位全中）
+    3: 3_000.0,       # 三等奖（前 6 位连续中 5+后 1 位）
+    4: 500.0,         # 四等奖
+    5: 30.0,          # 五等奖
+    6: 5.0,           # 六等奖
+}
+
+# --- 七乐彩 (qlc) 奖金表 ---
+QLC_PRIZE_MONEY: Dict[int, float] = {
+    1: 5_000_000.0,   # 一等奖（7+1）
+    2: 50_000.0,      # 二等奖（7+0）
+    3: 3_000.0,       # 三等奖（6+1）
+    4: 500.0,         # 四等奖（6+0 或 5+1）
+    5: 50.0,          # 五等奖（5+0 或 4+1）
+    6: 10.0,          # 六等奖（4+0 或 3+1）
+    7: 5.0,           # 七等奖（3+0 或 2+1 或 1+1 或 0+1）
+}
+
+# 彩种 → 奖金表 映射
+PRIZE_TABLES: Dict[str, Dict[int, float]] = {
+    "ssq": SSQ_PRIZE_MONEY,
+    "dlt": DLT_PRIZE_MONEY,
+    "pls": DIGIT3_PRIZE_MONEY,
+    "qxc": QXC_PRIZE_MONEY,
+    "sd": DIGIT3_PRIZE_MONEY,
+    "qlc": QLC_PRIZE_MONEY,
+}
+
 DEFAULT_BET_COST = 2.0  # 每注投注金额（元）
 
 
-def get_prize_money(prize_level: int) -> float:
-    """获取指定奖级的奖金。"""
-    return PRIZE_MONEY.get(prize_level, 0.0)
+def get_prize_money(prize_level: int, code: str = "ssq") -> float:
+    """获取指定奖级的奖金（按彩种分派）。"""
+    table = PRIZE_TABLES.get(code, SSQ_PRIZE_MONEY)
+    return table.get(prize_level, 0.0)
+
+
+# 向后兼容：保留旧常量供外部引用
+PRIZE_MONEY = SSQ_PRIZE_MONEY
 
 
 @dataclass
@@ -72,12 +130,39 @@ class BacktestReport:
     match_improvement: float
 
 
-def calculate_prize(red_match: int, blue_match: bool = False) -> Optional[int]:
-    """根据红球命中数和蓝球命中情况确定奖级。
+def calculate_prize(
+    red_match: int,
+    blue_match: bool = False,
+    blue_match_count: int = 0,
+    code: str = "ssq",
+) -> Optional[int]:
+    """根据命中情况确定奖级（按彩种分派）。
+
+    Args:
+        red_match: 红球/前区命中数
+        blue_match: 蓝球是否命中（向后兼容）
+        blue_match_count: 蓝球/后区命中数（大乐透等双蓝球玩法使用）
+        code: 彩种代码
 
     Returns:
-        奖级 1-6，未中奖返回 None
+        奖级编号，未中奖返回 None
     """
+    dispatch = {
+        "ssq": _calculate_prize_ssq,
+        "dlt": _calculate_prize_dlt,
+        "pls": _calculate_prize_digit3,
+        "sd": _calculate_prize_digit3,
+        "qxc": _calculate_prize_qxc,
+        "qlc": _calculate_prize_qlc,
+    }
+    handler = dispatch.get(code, _calculate_prize_ssq)
+    return handler(red_match, blue_match, blue_match_count)
+
+
+def _calculate_prize_ssq(
+    red_match: int, blue_match: bool, blue_match_count: int
+) -> Optional[int]:
+    """双色球奖级判定：6 红 + 1 蓝。"""
     if red_match == 6:
         return 1 if blue_match else 2
     elif red_match == 5:
@@ -88,7 +173,111 @@ def calculate_prize(red_match: int, blue_match: bool = False) -> Optional[int]:
         return 5 if blue_match else None
     elif red_match in (0, 1, 2):
         return 6 if blue_match else None
+    return None
 
+
+def _calculate_prize_dlt(
+    red_match: int, blue_match: bool, blue_match_count: int
+) -> Optional[int]:
+    """大乐透奖级判定：5 红 + 2 蓝。"""
+    bc = blue_match_count if blue_match_count > 0 else (1 if blue_match else 0)
+    if red_match == 5:
+        if bc == 2:
+            return 1
+        elif bc == 1:
+            return 2
+        else:
+            return 3
+    elif red_match == 4:
+        if bc == 2:
+            return 3
+        elif bc == 1:
+            return 4
+        else:
+            return 5
+    elif red_match == 3:
+        if bc == 2:
+            return 4
+        elif bc == 1:
+            return 6
+        else:
+            return 6
+    elif red_match == 2:
+        if bc == 2:
+            return 6
+        elif bc == 1:
+            return 7
+        else:
+            return 7
+    elif red_match == 1:
+        if bc == 2:
+            return 7
+        elif bc == 1:
+            return 8
+        else:
+            return 8
+    elif red_match == 0:
+        if bc == 2:
+            return 7
+        elif bc == 1:
+            return 8
+        else:
+            return 9
+    return None
+
+
+def _calculate_prize_digit3(
+    red_match: int, blue_match: bool, blue_match_count: int
+) -> Optional[int]:
+    """排列三/福彩3D 奖级判定：3 位数字。"""
+    if red_match == 3:
+        return 1  # 直选
+    elif red_match == 2:
+        return 2  # 组三
+    elif red_match == 1:
+        return 3  # 组六
+    return None
+
+
+def _calculate_prize_qxc(
+    red_match: int, blue_match: bool, blue_match_count: int
+) -> Optional[int]:
+    """七星彩奖级判定：7 位连续匹配。"""
+    if red_match == 7:
+        return 1
+    elif red_match == 6:
+        return 2
+    elif red_match == 5:
+        return 3
+    elif red_match == 4:
+        return 4
+    elif red_match == 3:
+        return 5
+    elif red_match == 2:
+        return 6
+    return None
+
+
+def _calculate_prize_qlc(
+    red_match: int, blue_match: bool, blue_match_count: int
+) -> Optional[int]:
+    """七乐彩奖级判定：7 红 + 1 特殊号。"""
+    if red_match == 7:
+        return 1 if blue_match else 2
+    elif red_match == 6:
+        return 3 if blue_match else 4
+    elif red_match == 5:
+        return 4 if blue_match else 5
+    elif red_match == 4:
+        return 5 if blue_match else 6
+    elif red_match == 3:
+        return 6 if blue_match else 7
+    elif red_match == 2:
+        return 7 if blue_match else None
+    elif red_match == 1:
+        return 7 if blue_match else None
+    elif red_match == 0:
+        return 7 if blue_match else None
     return None
 
 
@@ -99,27 +288,39 @@ def evaluate_single_bet(
     actual_blue: int,
     issue: str = "",
     cost_per_bet: float = DEFAULT_BET_COST,
+    code: str = "ssq",
+    blue_balls: Optional[List[int]] = None,
+    actual_blues: Optional[List[int]] = None,
 ) -> BetResult:
     """
-    评估单次投注结果。
+    评估单次投注结果（支持多彩种）。
 
     Args:
-        red_balls: 预测红球
-        blue_ball: 预测蓝球
-        actual_reds: 实际开奖红球
-        actual_blue: 实际开奖蓝球
+        red_balls: 预测红球/前区
+        blue_ball: 预测蓝球（单蓝球玩法，向后兼容）
+        actual_reds: 实际开奖红球/前区
+        actual_blue: 实际开奖蓝球（单蓝球玩法，向后兼容）
         issue: 期号
         cost_per_bet: 单注成本
+        code: 彩种代码
+        blue_balls: 预测蓝球列表（多蓝球玩法，如大乐透）
+        actual_blues: 实际开奖蓝球列表（多蓝球玩法）
 
     Returns:
         BetResult
     """
     red_matches = len(set(red_balls) & set(actual_reds))
-    blue_matched = blue_ball == actual_blue
 
-    prize = calculate_prize(red_matches, blue_matched)
-    prize_value = prize if prize is not None else 0.0
-    prize_level = prize
+    # 多蓝球支持（大乐透等）
+    if blue_balls is not None and actual_blues is not None:
+        blue_match_count = len(set(blue_balls) & set(actual_blues))
+        blue_matched = blue_match_count > 0
+    else:
+        blue_matched = blue_ball == actual_blue
+        blue_match_count = 1 if blue_matched else 0
+
+    prize = calculate_prize(red_matches, blue_matched, blue_match_count, code)
+    prize_value = get_prize_money(prize, code) if prize is not None else 0.0
 
     profit = prize_value - cost_per_bet
     roi = profit / cost_per_bet if cost_per_bet > 0 else 0
@@ -127,7 +328,7 @@ def evaluate_single_bet(
     return BetResult(
         red_matches=red_matches,
         blue_matched=blue_matched,
-        prize_level=prize_level,
+        prize_level=prize,
         prize=prize_value,
         cost=cost_per_bet,
         profit=profit,
@@ -218,12 +419,13 @@ class BacktestEngine:
                 actual_blue=actual_blue,
                 issue=str(issues[test_idx + 1]) if test_idx + 1 < len(issues) else "",
                 cost_per_bet=self.bet_cost,
+                code=self.config.code,
             )
             results.append(result)
 
         return self._generate_report(results)
 
-    def _train_models(self, X_train, y_train):
+    def _train_models(self, X_train: np.ndarray, y_train: np.ndarray) -> tuple:
         """训练所有模型（简化版）"""
         from .modeling import XGBoostPredictor
         from .model_lstm import LSTMPredictor
@@ -240,15 +442,15 @@ class BacktestEngine:
 
         return xgb, lstm, poisson, None
 
-    def _predict_next(self, xgb, lstm, poisson, stacking, X_next):
+    def _predict_next(self, xgb, lstm, poisson, stacking, X_next: np.ndarray) -> np.ndarray:
         """使用模型预测下一期"""
         probas = []
         for m in [xgb, lstm, poisson]:
             try:
                 p = m.predict_proba(X_next)[0]
                 probas.append(p)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("模型预测失败: {}", e)
 
         if probas:
             avg_proba = np.mean(probas, axis=0)
@@ -268,7 +470,7 @@ class BacktestEngine:
         for r in results:
             if r.prize_level is not None:
                 prize_counts[r.prize_level] += 1
-                total_reward += get_prize_money(r.prize_level)
+                total_reward += get_prize_money(r.prize_level, self.config.code)
 
         prize_rates = {level: count / total_bets for level, count in prize_counts.items()}
 

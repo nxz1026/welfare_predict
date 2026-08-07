@@ -30,7 +30,7 @@ class UserHistory:
     _locks: Dict[str, threading.Lock] = {}  # per-user locks
     _global_lock = threading.Lock()
 
-    def __init__(self, user_id: str, storage_dir: str = "data/users"):
+    def __init__(self, user_id: str, storage_dir: str = "data/users") -> None:
         self.user_id = user_id
         self.storage_path = Path(storage_dir) / f"{user_id}.json"
         with self._global_lock:
@@ -53,13 +53,13 @@ class UserHistory:
             "total_won": 0.0,
         }
 
-    def _save(self):
+    def _save(self) -> None:
         with self._lock:
             self.storage_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.storage_path, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, ensure_ascii=False, indent=2)
 
-    def record_purchase(self, numbers: Dict[str, List[int]], cost: float = 2.0):
+    def record_purchase(self, numbers: Dict[str, List[int]], cost: float = 2.0) -> None:
         """
         记录一次购买。
 
@@ -83,7 +83,7 @@ class UserHistory:
         self.data["total_spent"] += cost
         self._save()
 
-    def record_recommendation(self, rec_summary: Dict):
+    def record_recommendation(self, rec_summary: Dict) -> None:
         """记录一次推荐"""
         self.data["recommendations"].append({
             "timestamp": datetime.now().isoformat(),
@@ -94,7 +94,7 @@ class UserHistory:
             self.data["recommendations"] = self.data["recommendations"][-50:]
         self._save()
 
-    def record_win(self, level: int, amount: float, issue: str = ""):
+    def record_win(self, level: int, amount: float, issue: str = "") -> None:
         """记录一次中奖"""
         self.data["wins"].append({
             "issue": issue,

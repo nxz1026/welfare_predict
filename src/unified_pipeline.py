@@ -13,10 +13,11 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -175,7 +176,8 @@ class UnifiedPipeline:
                         self.config.name, X_train.shape[0], X_train.shape[1])
         return summary
 
-    def _train_stacking(self, X_train, y_train, X_val, y_val, **kwargs):
+    def _train_stacking(self, X_train: np.ndarray, y_train: np.ndarray,
+                          X_val: np.ndarray, y_val: np.ndarray, **kwargs) -> StackingEnsemble:
         """P1-01 修复：完整的 Stacking 训练流程。
 
         流程：
@@ -205,11 +207,11 @@ class UnifiedPipeline:
         # 拼接 meta-features: (n_val, num_classes * 3)
         meta_X = np.concatenate([xgb_proba, lstm_proba, poisson_proba], axis=1)
 
-        # 3. 训练元学习器（one-vs-rest 多标签分类）
-        from sklearn.multiclass import OneVsRestClassifier
+        # 3. 训练元学习器（MultiOutputClassifier 适配多标签二值矩阵）
+        from sklearn.multioutput import MultiOutputClassifier
         from sklearn.linear_model import LogisticRegression as LR
         base_lr = LR(max_iter=1000, C=1.0)
-        meta_learner = OneVsRestClassifier(base_lr)
+        meta_learner = MultiOutputClassifier(base_lr)
         meta_learner.fit(meta_X, y_val)
 
         # 4. 封装为 StackingEnsemble
@@ -308,7 +310,7 @@ class UnifiedPipeline:
                 p = p / p.sum()
         return np.array(selected)
 
-    def _save_model(self):
+    def _save_model(self) -> None:
         """使用 ModelIO 统一保存模型（P1-04 修复）。"""
         model_path = self.model_dir / "model.pkl"
         metadata = {
@@ -320,14 +322,14 @@ class UnifiedPipeline:
         ModelIO.save(self.model, model_path, metadata=metadata)
         logger.info("模型已保存: {}", model_path)
 
-    def _save_summary(self, summary: UnifiedTrainingSummary):
+    def _save_summary(self, summary: UnifiedTrainingSummary) -> None:
         """保存训练摘要"""
         summary_path = self.model_dir / "summary.json"
         with open(summary_path, 'w', encoding='utf-8') as f:
             json.dump(asdict(summary), f, ensure_ascii=False, indent=2)
         logger.info("训练摘要已保存: {}", summary_path)
 
-    def _load_model(self):
+    def _load_model(self) -> None:
         """使用 ModelIO 统一加载模型（P1-04 修复）。"""
         model_path = self.model_dir / "model.pkl"
         if not model_path.exists():
@@ -345,13 +347,17 @@ class UnifiedPipeline:
 class StackingEnsemble:
     """Stacking 集成模型：组合多个基学习器的预测结果。"""
 
-    def __init__(self, base_models: dict, meta_learner, config: LotteryModelConfig):
+    def __init__(self, base_models: Dict[str, Any], meta_learner: Any, config: LotteryModelConfig) -> None:
         self.base_models = base_models
         self.meta_learner = meta_learner
         self.config = config
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        """预测每个号码被选中的概率。"""
+        """预测每个号码被选中的概率。
+
+        MultiOutputClassifier.predict_proba 返回 List[(n, 2)]，
+        需拼接为 (n, num_classes) 矩阵，每列取正类概率。
+        """
         # 收集所有基学习器的概率预测
         probas = []
         for name in ["xgb", "lstm", "poisson"]:
@@ -360,31 +366,85 @@ class StackingEnsemble:
 
         # 拼接作为 meta-features
         meta_X = np.concatenate(probas, axis=1)
-        # 元学习器预测
-        return self.meta_learner.predict_proba(meta_X)
+
+        # 元学习器预测 — 兼容 MultiOutputClassifier 和 OneVsRestClassifier
+        raw = self.meta_learner.predict_proba(meta_X)
+        if isinstance(raw, list):
+            # MultiOutputClassifier 返回 List[(n, 2)]
+            n_samples = raw[0].shape[0]
+            result = np.zeros((n_samples, len(raw)), dtype=np.float32)
+            for i, proba_2col in enumerate(raw):
+                result[:, i] = proba_2col[:, 1]  # 取正类概率
+            return result
+        # OneVsRestClassifier 或其他返回 (n, num_classes)
+        return raw
 
     def save_model(self, path: str) -> None:
-        """保存 Stacking 模型（包含所有子模型）。"""
+        """保存 Stacking 模型（包含所有子模型）。
+
+        Args:
+            path: 目录路径，各子模型保存到该目录下
+        """
         import joblib
         import os
+        import json
         os.makedirs(path, exist_ok=True)
-        # 分别保存各组件
+
+        # 分别保存各基学习器
         for name, model in self.base_models.items():
             sub_path = os.path.join(path, f"{name}.pkl")
-            if hasattr(model, 'save_model'):
+            if hasattr(model, 'save_model') and callable(model.save_model):
                 model.save_model(sub_path)
             else:
                 joblib.dump(model, sub_path)
+
         # 保存元学习器
         joblib.dump(self.meta_learner, os.path.join(path, "meta_learner.pkl"))
-        # 保存配置信息
-        import json
-        with open(os.path.join(path, "ensemble_info.json"), "w") as f:
-            json.dump({"base_models": list(self.base_models.keys())}, f)
 
-    def load_model(self, path: str) -> None:
-        """加载 Stacking 模型。"""
-        pass  # 由 ModelIO.load 统一处理
+        # 保存配置与结构信息
+        info = {
+            "base_models": list(self.base_models.keys()),
+            "code": self.config.code,
+        }
+        with open(os.path.join(path, "ensemble_info.json"), "w", encoding="utf-8") as f:
+            json.dump(info, f, ensure_ascii=False)
+
+    @classmethod
+    def load_model(cls, path: str) -> "StackingEnsemble":
+        """从目录加载 Stacking 模型。
+
+        Args:
+            path: 保存目录路径
+
+        Returns:
+            加载后的 StackingEnsemble 实例
+        """
+        import joblib
+        import json
+        from .config import get_lottery_config
+
+        # 读取结构信息
+        info_path = os.path.join(path, "ensemble_info.json")
+        with open(info_path, "r", encoding="utf-8") as f:
+            info = json.load(f)
+
+        config = get_lottery_config(info["code"])
+
+        # 加载基学习器
+        base_models = {}
+        for name in info["base_models"]:
+            sub_path = os.path.join(path, f"{name}.pkl")
+            if os.path.exists(sub_path):
+                base_models[name] = joblib.load(sub_path)
+
+        # 加载元学习器
+        meta_learner = joblib.load(os.path.join(path, "meta_learner.pkl"))
+
+        return cls(
+            base_models=base_models,
+            meta_learner=meta_learner,
+            config=config,
+        )
 
 
 # ============================================================

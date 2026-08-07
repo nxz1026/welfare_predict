@@ -148,8 +148,5 @@ data/sessions.db
 # Docker 排除（P3-04 新增）
 .dockerignore
 
-# 环境变量模板（P4-05 新增）
-.env.example
-
 # TODO 文件
 TODO.md

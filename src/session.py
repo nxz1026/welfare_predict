@@ -7,14 +7,18 @@
 - 自动过期清理
 """
 
+__all__ = ["create_session", "validate_session", "delete_session", "cleanup_expired"]
+
 import sqlite3
 import time
 import uuid
 from pathlib import Path
 from typing import Optional
 
-# 会话数据库路径（与 users 目录同级）
-SESSION_DB_PATH = Path("data/sessions.db")
+from src.config import PATHS
+
+# 会话数据库路径 — 通过 config.PATHS 集中管理，避免相对路径歧义
+SESSION_DB_PATH = PATHS["data"] / "sessions.db"
 
 
 def _get_conn() -> sqlite3.Connection:

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -32,6 +33,10 @@ from .config import (
     LotteryModelConfig,
     ensure_runtime_directories,
 )
+
+# 历史数据缓存：键为 (路径, 修改时间)，值为 DataFrame
+_HISTORY_CACHE_MAX = 8
+_history_cache: dict = {}
 
 
 @dataclass
@@ -78,7 +83,18 @@ class LotteryHttpClient:
             raise ValueError(f"禁止访问域名: {domain}")
         response = self._session.get(url, headers=self._headers, timeout=self._timeout)
         response.raise_for_status()
-        response.encoding = "utf-8"
+        # 编码容错：500.com 等中文网站可能使用 GB2312/GBK
+        for encoding in ("utf-8", "gb2312", "gbk", "gb18030"):
+            try:
+                response.encoding = encoding
+                text = response.text
+                # 检测乱码：如果常见中文词可正常解码则认为编码正确
+                if "期" in text or "红球" in text or "蓝球" in text or len(text) > 100:
+                    return text
+            except (UnicodeDecodeError, UnicodeError):
+                continue
+        # 兜底：使用 apparent_encoding
+        response.encoding = response.apparent_encoding
         return response.text
 
 
@@ -144,8 +160,29 @@ def _parse_issue_list(config: LotteryModelConfig, html: str) -> pd.DataFrame:
             for idx, value in enumerate(digits):
                 record[f"红球_{idx + 1}"] = int(float(value))
         elif config.code == "qlc":
-            for idx in range(config.red.sequence_len):
-                record[f"红球_{idx + 1}"] = tds[idx + 1].get_text(strip=True)
+            # QLC: td[0]=期号, td[1]=开奖号码(7红+1蓝span.cBlue), td[5]=开奖日期
+            numbers_td = tds[1]
+            blue_span = numbers_td.find("span", class_="cBlue")
+            if blue_span:
+                # 提取蓝球（特别号）
+                record["蓝球_1"] = blue_span.get_text(strip=True)
+                # 提取红球：取 span 之前的文本节点
+                red_nums = []
+                for child in numbers_td.children:
+                    if child.name == "span":
+                        break
+                    if isinstance(child, str):
+                        red_nums.extend(child.strip().split())
+            else:
+                # 兜底：所有数字，最后一个为蓝球
+                all_nums = numbers_td.get_text(strip=True).split()
+                red_nums = all_nums[:7]
+                record["蓝球_1"] = all_nums[7] if len(all_nums) > 7 else ""
+            for idx, num in enumerate(red_nums[: config.red.sequence_len]):
+                record[f"红球_{idx + 1}"] = num
+            # 开奖日期在 td[5]
+            if len(tds) > 5:
+                record["开奖日期"] = tds[5].get_text(strip=True)
         rows.append(record)
 
     if not rows:
@@ -183,9 +220,20 @@ def download_history(
     start: Optional[int] = None,
     end: Optional[int] = None,
     use_sequence_order: bool = False,
+    merge: bool = False,
     client: Optional[LotteryHttpClient] = None,
 ) -> DownloadResult:
-    """下载历史数据并保存到 data/<code>/data.csv。"""
+    """下载历史数据并保存到 data/<code>/data.csv。
+
+    Args:
+        code: 彩种代码
+        start: 起始期号（可选）
+        end: 结束期号（可选）
+        use_sequence_order: 是否使用顺序模式（仅KL8，已废弃）
+        merge: 是否与已有数据合并去重。True 时先读取已有数据，
+               下载后合并去重再保存，避免覆盖丢失历史数据。
+        client: 可选的 HTTP 客户端
+    """
 
     ensure_runtime_directories()
     cfg = LOTTERY_CONFIGS[code]
@@ -211,15 +259,52 @@ def download_history(
     url = _build_history_url(cfg, start, end)
     logger.info("下载【{}】历史数据: {}", cfg.name, url)
     html = client.get_text(url)
-    df = _parse_issue_list(cfg, html)
+    fresh_df = _parse_issue_list(cfg, html)
 
     save_dir = PATHS["data"] / cfg.code
     save_dir.mkdir(parents=True, exist_ok=True)
     output_path = save_dir / DATA_FILE_NAME
-    df.to_csv(output_path, index=False, encoding="utf-8")
+
+    # 增量合并模式：读取已有数据，合并去重后保存
+    existing_count = 0
+    new_count = 0
+    if merge and output_path.exists():
+        try:
+            existing_df = pd.read_csv(output_path, encoding="utf-8-sig")
+        except Exception:
+            try:
+                existing_df = pd.read_csv(output_path, encoding="utf-8")
+            except Exception as e:
+                logger.warning("读取已有数据失败，将覆盖保存: {}", e)
+                existing_df = None
+
+        if existing_df is not None and "期数" in existing_df.columns:
+            existing_issues = set(existing_df["期数"].astype(str).tolist())
+            fresh_issues = set(fresh_df["期数"].astype(str).tolist())
+            new_count = len(fresh_issues - existing_issues)
+            existing_count = len(existing_issues)
+
+            if new_count > 0:
+                combined = pd.concat([existing_df, fresh_df], ignore_index=True)
+                combined.drop_duplicates(subset=["期数"], keep="last", inplace=True)
+                combined.sort_values("期数", ascending=False, inplace=True)
+                fresh_df = combined.reset_index(drop=True)
+                logger.info(
+                    "增量合并: 已有 {} 期, 新增 {} 期, 合并后 {} 期",
+                    existing_count, new_count, len(fresh_df),
+                )
+            else:
+                # 无新数据，保留已有数据，不覆盖文件
+                logger.info("增量合并: 无新数据（已有 {} 期），保留原有数据", existing_count)
+                fresh_df = existing_df.reset_index(drop=True)
+        elif existing_df is not None:
+            # 已有数据无期数列，直接覆盖
+            logger.warning("已有数据格式异常（无期数列），将覆盖保存")
+
+    fresh_df.to_csv(output_path, index=False, encoding="utf-8")
     meta = DownloadResult(
         code=cfg.code,
-        total_issues=len(df),
+        total_issues=len(fresh_df),
         saved_path=str(output_path),
         timestamp=datetime.utcnow().isoformat(),
     )
@@ -230,7 +315,7 @@ def download_history(
     return meta
 
 
-def _repair_sd_data():
+def _repair_sd_data() -> pd.DataFrame:
     """从 3d/ 原始数据重建 sd/ 数据文件（含试机号、开奖号码）。"""
     src = PATHS["data"] / "3d" / DATA_FILE_NAME
     dst = PATHS["data"] / "sd" / DATA_FILE_NAME
@@ -251,16 +336,32 @@ def _repair_sd_data():
     return out
 
 
-def load_history(code: str) -> pd.DataFrame:
-    """加载本地已下载的历史数据。自动检测损坏并尝试重建。"""
+def load_history(code: str, data_path: Optional[str] = None) -> pd.DataFrame:
+    """加载本地已下载的历史数据。自动检测损坏并尝试重建。
+
+    使用 LRU 缓存避免同一请求内重复读取 CSV 文件。
+
+    Args:
+        code: 彩种代码
+        data_path: 可选的自定义数据文件路径
+    """
+    from functools import lru_cache
+
+    # 缓存键：基于文件路径 + 修改时间，确保数据更新后缓存失效
     cfg = LOTTERY_CONFIGS[code]
-    path = PATHS["data"] / cfg.code / DATA_FILE_NAME
+    path = Path(data_path) if data_path else PATHS["data"] / cfg.code / DATA_FILE_NAME
     if not path.exists():
         raise FileNotFoundError(f"未找到 {cfg.name} 历史数据，请先执行下载: {path}")
+
+    cache_key = (str(path), path.stat().st_mtime)
+
+    if cache_key in _history_cache:
+        return _history_cache[cache_key].copy()
 
     try:
         df = pd.read_csv(path, encoding="utf-8-sig")
     except Exception:
+        logger.debug("utf-8-sig 解码失败，尝试 utf-8: {}", path)
         df = pd.read_csv(path, encoding="utf-8")
 
     if "期数" not in df.columns:
@@ -273,6 +374,11 @@ def load_history(code: str) -> pd.DataFrame:
     if missing_red:
         logger.warning("{} 数据缺少 {}，尝试自动重建...", cfg.name, missing_red)
         return _repair_data(code, cfg, path)
+
+    # 缓存结果（限制缓存大小避免内存泄漏）
+    if len(_history_cache) > _HISTORY_CACHE_MAX:
+        _history_cache.popitem(last=False)
+    _history_cache[cache_key] = df
 
     return df
 

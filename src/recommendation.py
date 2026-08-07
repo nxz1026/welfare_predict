@@ -59,7 +59,7 @@ class ConservativeStrategy:
 
     name = "conservative"
 
-    def __init__(self, config: LotteryModelConfig):
+    def __init__(self, config: LotteryModelConfig) -> None:
         self.config = config
 
     def _select_blue(self, df: pd.DataFrame) -> int:
@@ -121,7 +121,7 @@ class AggressiveStrategy:
 
     name = "aggressive"
 
-    def __init__(self, config: LotteryModelConfig):
+    def __init__(self, config: LotteryModelConfig) -> None:
         self.config = config
 
     def _select_blue(self, df: pd.DataFrame) -> int:
@@ -178,7 +178,7 @@ class BalancedStrategy:
 
     name = "balanced"
 
-    def __init__(self, config: LotteryModelConfig):
+    def __init__(self, config: LotteryModelConfig) -> None:
         self.config = config
 
     def generate(
@@ -232,7 +232,7 @@ class MysticStrategy:
 
     name = "mystic"
 
-    def __init__(self, config: LotteryModelConfig):
+    def __init__(self, config: LotteryModelConfig) -> None:
         self.config = config
 
     def generate(
@@ -295,7 +295,7 @@ class RecommendationEngine:
     多策略推荐引擎。
     """
 
-    def __init__(self, code: str = "ssq"):
+    def __init__(self, code: str = "ssq") -> None:
         self.code = code
         self.config = get_lottery_config(code)
         self.strategies = {
@@ -393,7 +393,7 @@ def generate_recommendation(
     """
     from .data_fetcher import load_history
 
-    df = load_history(code, data_path) if data_path else load_history(code)
+    df = load_history(code, data_path=data_path)
     engine = RecommendationEngine(code)
     return engine.generate(df, lucky_numbers)
 

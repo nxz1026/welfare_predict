@@ -199,8 +199,6 @@
     <div class="lottery-tabs">
         <div class="lottery-tab active" data-code="ssq" onclick="switchLottery('ssq')">双色球</div>
         <div class="lottery-tab" data-code="sd" onclick="switchLottery('sd')">福彩3D</div>
-        <div class="lottery-tab" data-code="qlc" onclick="switchLottery('qlc')">七乐彩</div>
-        <div class="lottery-tab" data-code="kl8" onclick="switchLottery('kl8')" title="快乐8已迁移至独立项目">快乐8</div>
     </div>
 
     <div class="tabs">
@@ -355,28 +353,6 @@
                 heatmapCols: 10, heatmapRows: 3,
                 hasBlue: false,
             },
-            qlc: {
-                name: '七乐彩',
-                ballType: 'red-special',
-                digitNames: ['红球', '特别号'],
-                inputLabels: ['红球', '特别号'],
-                redCount: 7, blueCount: 1,
-                redMin: 1, redMax: 30, blueMin: 1, blueMax: 30,
-                numCount: 30,
-                heatmapCols: 6, heatmapRows: 5,
-                hasBlue: true,
-            },
-            kl8: {
-                name: '快乐8',
-                ballType: 'pick-n',
-                digitNames: ['选号'],
-                inputLabels: ['选号'],
-                redCount: 10, blueCount: 0,
-                redMin: 1, redMax: 80, blueMin: 0, blueMax: 0,
-                numCount: 80,
-                heatmapCols: 10, heatmapRows: 8,
-                hasBlue: false,
-            },
         };
 
         // 初始化
@@ -386,11 +362,6 @@
         });
 
         function switchLottery(code) {
-            // 快乐8已迁移，点击时提示
-            if (code === 'kl8') {
-                alert('快乐8已于2025年10月迁移至独立项目，暂不支持在线使用。');
-                return;
-            }
             currentCode = code;
             document.querySelectorAll('.lottery-tab').forEach(t => {
                 t.classList.toggle('active', t.dataset.code === code);
@@ -430,15 +401,6 @@
                         </span>
                     `).join('');
                 blueContainer.style.display = 'none';
-            } else if (info.ballType === 'red-special') {
-                // 七乐彩: 7红 + 1特别号
-                redContainer.innerHTML = '<span style="font-size:13px;color:#e74c3c;font-weight:600;">红球:</span>'
-                    + [1,2,3,4,5,6,7].map(i => `
-                        <input class="num-input red-input" id="r${i}" maxlength="2" placeholder="${String(i).padStart(2,'0')}">
-                    `).join('');
-                blueContainer.style.display = 'flex';
-                blueContainer.innerHTML = '<span style="font-size:13px;color:#9b59b6;font-weight:600;">特别号:</span>'
-                    + '<input class="num-input blue-input" id="b1" maxlength="2" placeholder="15" style="border-color:#9b59b6;">';
             } else {
                 // 双色球: 6红 + 1蓝
                 redContainer.innerHTML = '<span style="font-size:13px;color:#e74c3c;font-weight:600;">红球:</span>'
@@ -452,15 +414,9 @@
         }
 
         async function checkAuth() {
-            try {
-                const res = await fetch('/api/v1/me');
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const data = await res.json();
-                if (!data.logged_in) window.location.href = '/login';
-            } catch(e) {
-                console.error('Auth check failed:', e);
-                // 不跳转，让用户继续使用（API调用会在需要时返回401）
-            }
+            const res = await fetch('/api/v1/me');
+            const data = await res.json();
+            if (!data.logged_in) window.location.href = '/login';
         }
 
         async function logout() {
@@ -503,11 +459,6 @@
                         <div class="digit-label">${info.digitNames[i]}</div>
                     </span>
                 `).join('');
-            }
-            if (info.ballType === 'red-special') {
-                // 七乐彩: 红球 + 特别号(紫色)
-                return reds.map(b => `<span class="ball red">${b}</span>`).join('')
-                    + (blue != null ? `<span class="ball" style="background:#9b59b6;color:#fff;">${blue}</span>` : '');
             }
             return reds.map(b => `<span class="ball red">${b}</span>`).join('')
                 + (blue != null ? `<span class="ball blue">${blue}</span>` : '');
@@ -562,9 +513,7 @@
                 const data = await res.json();
                 const info = LOTTERY_INFO[currentCode];
                 const headerRow = document.querySelector('#panel-history thead tr');
-                if (info.ballType === 'red-special') {
-                    headerRow.innerHTML = '<th>期号</th><th>日期</th><th>红球</th><th>特别号</th>';
-                } else if (info.hasBlue) {
+                if (info.hasBlue) {
                     headerRow.innerHTML = '<th>期号</th><th>日期</th><th>红球</th><th>蓝球</th>';
                 } else {
                     headerRow.innerHTML = '<th>期号</th><th>日期</th><th colspan="3">号码（百位 十位 个位）</th>';
@@ -677,27 +626,23 @@
                     })),
                 });
             } else {
-                // 双色球/七乐彩: 热力图
+                // 双色球: 6x6 热力图
                 if (!charts.hot) charts.hot = echarts.init(document.getElementById('hot-chart'));
                 const hot = data.hot_values;
                 const minHot = Math.min(...hot), maxHot = Math.max(...hot);
-                const cols = info.heatmapCols || 6;
-                const totalNums = info.numCount || 33;
-                const rows = Math.ceil(totalNums / cols);
-                const rowLabels = Array.from({length: rows}, (_, i) => `第${i+1}排`);
-                const colLabels = Array.from({length: cols}, (_, i) => `${i+1}`);
+                const cols = 6;
                 const heatmapData = [];
-                for (let i = 0; i < totalNums; i++) {
+                for (let i = 0; i < 33; i++) {
                     const row = Math.floor(i / cols);
                     const col = i % cols;
                     heatmapData.push([col, row, hot[i], i + 1]);
                 }
                 if (!charts.hot) charts.hot = echarts.init(document.getElementById('hot-chart'));
                 charts.hot.setOption({
-                    title: { text: `近30期热号统计（1-${totalNums}）`, left: 'center', textStyle: { fontSize: 14 } },
+                    title: { text: '近30期热号统计', left: 'center', textStyle: { fontSize: 14 } },
                     grid: { left: 15, right: 60, top: 35, bottom: 30 },
-                    xAxis: { type: 'category', data: colLabels, splitArea: { show: true }, axisLabel: { fontSize: 13, fontWeight: 'bold', color: '#1e293b' } },
-                    yAxis: { type: 'category', data: rowLabels, splitArea: { show: true }, show: true, axisLabel: { fontSize: 11, color: '#555' } },
+                    xAxis: { type: 'category', data: ['一','二','三','四','五','六'], splitArea: { show: true }, axisLabel: { fontSize: 13, fontWeight: 'bold', color: '#1e293b' } },
+                    yAxis: { type: 'category', data: ['第1排','第2排','第3排','第4排','第5排','第6排'], splitArea: { show: true }, show: true, axisLabel: { fontSize: 11, color: '#555' } },
                     visualMap: {
                         min: minHot, max: maxHot,
                         calculable: true,

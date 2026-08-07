@@ -60,10 +60,12 @@ class StrategyBacktestEngine:
         config: LotteryModelConfig,
         window_size: int = 200,
         bet_cost: float = 2.0,
+        retrain_interval: int = 1,
     ):
         self.config = config
         self.window_size = window_size
         self.bet_cost = bet_cost
+        self.retrain_interval = retrain_interval
 
     def run(
         self,
@@ -92,7 +94,17 @@ class StrategyBacktestEngine:
         stats: Dict[str, Dict] = {}
         engine = RecommendationEngine(self.config.code)
 
+        # P3-15: 预创建 ML pipeline 并缓存，避免每轮重建
         ml_methods = ["xgb", "lstm", "poisson", "stacking"]
+        ml_pipelines: Dict[str, UnifiedPipeline] = {}
+        ml_trained_at: Dict[str, int] = {}  # 记录上次训练的窗口索引
+        if include_ml:
+            for method in ml_methods:
+                try:
+                    ml_pipelines[method] = UnifiedPipeline(self.config.code, method=method)
+                    ml_trained_at[method] = -1
+                except Exception as e:
+                    logger.warning("创建 {} pipeline 失败: {}", method, e)
 
         for i in range(n_backtest):
             train_end = i + self.window_size
@@ -117,18 +129,20 @@ class StrategyBacktestEngine:
                 for s in rec.strategies:
                     self._record_strategy(stats, s.strategy_name, s.red_balls, s.blue_ball, actual_reds, actual_blue)
 
-            # ML 模型推荐
+            # ML 模型推荐（P3-15: pipeline 复用 + 按间隔重训练）
             if include_ml:
-                for method in ml_methods:
+                for method, pipeline in ml_pipelines.items():
                     ml_name = f"ML_{method}"
-                try:
-                    pipeline = UnifiedPipeline(self.config.code, method=method)
-                    pipeline.train(df_train)
-                    pred = pipeline.predict(df_train)
-                    self._record_strategy(stats, ml_name, pred.red_balls, pred.blue_ball, actual_reds, actual_blue)
-                except Exception as e:
-                    logger.warning("第 {} 期 {} 失败: {}", test_idx, ml_name, e)
-                    continue
+                    try:
+                        # 仅在间隔期到达或首次训练时才重训练
+                        if (i - ml_trained_at[method]) >= self.retrain_interval:
+                            pipeline.train(df_train)
+                            ml_trained_at[method] = i
+                        pred = pipeline.predict(df_train)
+                        self._record_strategy(stats, ml_name, pred.red_balls, pred.blue_ball, actual_reds, actual_blue)
+                    except Exception as e:
+                        logger.warning("第 {} 期 {} 失败: {}", test_idx, ml_name, e)
+                        continue
 
         # 计算汇总
         performances = {}
@@ -162,7 +176,9 @@ class StrategyBacktestEngine:
 
         return report
 
-    def _record_strategy(self, stats, name, red_balls, blue_ball, actual_reds, actual_blue):
+    def _record_strategy(self, stats: Dict, name: str,
+                          red_balls: List[int], blue_ball: int,
+                          actual_reds: List[int], actual_blue: int) -> None:
         if name not in stats:
             stats[name] = {
                 "total_bets": 0,
@@ -186,10 +202,10 @@ class StrategyBacktestEngine:
         if blue_match:
             st["blue_match"] += 1
 
-        prize_level = calculate_prize(match_count, blue_match)
+        prize_level = calculate_prize(match_count, blue_match, code=self.config.code)
         if prize_level is not None:
             st["prize_counts"][prize_level] += 1
-            st["total_reward"] += get_prize_money(prize_level)
+            st["total_reward"] += get_prize_money(prize_level, self.config.code)
 
 
 def generate_ranking_report(
@@ -198,6 +214,7 @@ def generate_ranking_report(
     n_backtest: Optional[int] = None,
     df: Optional[pd.DataFrame] = None,
     include_ml: bool = True,
+    retrain_interval: int = 1,
 ) -> RankingReport:
     """
     基于历史数据生成策略排行榜（含规则策略 + ML 模型）。
@@ -208,6 +225,7 @@ def generate_ranking_report(
         n_backtest: 回测期数
         df: 历史数据 DataFrame，若为 None 则从本地加载
         include_ml: 是否包含 ML 模型回测
+        retrain_interval: ML 模型重训练间隔（每 N 期重训练一次，默认每期）
 
     Returns:
         RankingReport
@@ -217,7 +235,7 @@ def generate_ranking_report(
     if df is None:
         df = load_history(code)
     config = get_lottery_config(code)
-    engine = StrategyBacktestEngine(config, window_size=window_size)
+    engine = StrategyBacktestEngine(config, window_size=window_size, retrain_interval=retrain_interval)
     return engine.run(df, n_backtest, include_ml=include_ml)
 
 

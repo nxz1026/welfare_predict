@@ -56,8 +56,7 @@ class DataSource(ABC):
 class Web500Source(DataSource):
     """500.com 网页抓取"""
 
-    def __init__(self):
-        from .config import NETWORK_CONFIG
+    def __init__(self) -> None:
         from .data_fetcher import LotteryHttpClient
         self.client = LotteryHttpClient(
             timeout=NETWORK_CONFIG["timeout"],
@@ -84,7 +83,7 @@ class Web500Source(DataSource):
 class TianyanAPISource(DataSource):
     """天行数据 API"""
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None) -> None:
         self.api_key = api_key or os.getenv("TIANYAN_API_KEY")
         if not self.api_key:
             logger.warning("天行数据 API key 未设置，跳过")
@@ -148,7 +147,7 @@ class TianyanAPISource(DataSource):
 class LocalCSVSource(DataSource):
     """本地 CSV 文件"""
 
-    def __init__(self, file_path: Optional[str] = None):
+    def __init__(self, file_path: Optional[str] = None) -> None:
         self.file_path = file_path
 
     def get_name(self) -> str:
@@ -170,11 +169,11 @@ class LocalCSVSource(DataSource):
 class DataSourceManager:
     """数据源管理器"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._sources: Dict[str, DataSource] = {}
         self._register_defaults()
 
-    def _register_defaults(self):
+    def _register_defaults(self) -> None:
         """注册默认数据源"""
         web500 = Web500Source()
         self.register(web500)
@@ -186,7 +185,7 @@ class DataSourceManager:
         if os.getenv("TIANYAN_API_KEY"):
             self.register(TianyanAPISource())
 
-    def register(self, source: DataSource):
+    def register(self, source: DataSource) -> None:
         """注册数据源"""
         self._sources[source.get_name()] = source
         logger.debug("注册数据源: {}", source.get_name())

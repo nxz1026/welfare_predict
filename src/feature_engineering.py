@@ -123,26 +123,37 @@ def compute_interval_features(
 
     对于每期，计算每个号码上一次出现与再上一次出现的期间隔。
     如果只出现一次或从未出现，设为 max_interval（默认 50）。
+
+    优化：仅更新当前行出现的号码，其余继承上一行间隔值，
+    复杂度从 O(n * num_classes) 降至 O(n * k)，k 为每期球数。
     """
     red_balls = _extract_red_balls(df, config)
     num_classes = config.red.num_classes
     offset = config.red.min_val
     max_interval = DEFAULT_MAX_INTERVAL
     pool = list(range(offset, offset + num_classes))
+    n_rows = len(df)
 
-    features = np.full((len(df), num_classes), max_interval, dtype=np.float32)
-    positions = {num: [] for num in pool}
+    features = np.full((n_rows, num_classes), max_interval, dtype=np.float32)
+    # 记录每个号码最近两次出现的行号，避免存储完整位置列表
+    last_pos: Dict[int, int] = {}
+    second_last_pos: Dict[int, int] = {}
+    # 当前间隔值，未出现的号码保持 max_interval
+    current_intervals = np.full(num_classes, max_interval, dtype=np.float32)
 
-    for i in range(len(df)):
+    for i in range(n_rows):
         current_numbers = set(red_balls[i])
         for num in current_numbers:
-            positions[num].append(i)
-        for j, num in enumerate(pool):
-            pos_list = positions[num]
-            if len(pos_list) >= 2:
-                features[i, j] = pos_list[-1] - pos_list[-2]
+            j = num - offset  # 映射到特征列索引
+            prev = last_pos.get(num)
+            if prev is not None:
+                second_last_pos[num] = prev
+                current_intervals[j] = float(i - prev)
             else:
-                features[i, j] = max_interval
+                current_intervals[j] = max_interval
+            last_pos[num] = i
+        # 仅拷贝当前行间隔值（未出现的号码继承上一行）
+        features[i] = current_intervals
 
     cols = [f"interval_{i}" for i in pool]
     return pd.DataFrame(features, columns=cols)
@@ -212,17 +223,22 @@ def compute_ac_value(df: pd.DataFrame, config: LotteryModelConfig) -> pd.DataFra
 
     AC 值 = 所有两两差值的个数 - (号码个数 - 1)
     反映号码的分散程度。AC 值越大，号码越分散。
+
+    向量化实现：利用 numpy 广播一次性计算所有行的两两差值。
     """
     red_balls = _extract_red_balls(df, config)
-    ac_values = np.zeros(len(df), dtype=np.float32)
+    n, k = red_balls.shape
 
-    for i in range(len(df)):
-        balls = sorted(red_balls[i])
-        diffs = set()
-        for j in range(len(balls)):
-            for k in range(j + 1, len(balls)):
-                diffs.add(balls[k] - balls[j])
-        ac_values[i] = len(diffs) - (len(balls) - 1)
+    # 利用广播计算两两差值矩阵 (n, k, k)，取上三角
+    diff_matrix = red_balls[:, :, None] - red_balls[:, None, :]
+    upper_idx = np.triu_indices(k, k=1)
+    diffs = diff_matrix[:, upper_idx[0], upper_idx[1]]  # (n, C(k,2))
+
+    # 排序后统计每行唯一差值数
+    diffs_sorted = np.sort(diffs, axis=1)
+    unique_mask = np.ones_like(diffs_sorted, dtype=bool)
+    unique_mask[:, 1:] = diffs_sorted[:, 1:] != diffs_sorted[:, :-1]
+    ac_values = unique_mask.sum(axis=1).astype(np.float32) - (k - 1)
 
     return pd.DataFrame({"ac_value": ac_values})
 

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-API 層端到端測試（P2-04 新增）。
+API 层端到端测试（P2-04 新增）。
 
-覆蓋主要介面：登錄/登出、授權校驗、預測輸出格式、未知彩種等。
-使用 httpx.AsyncClient + FastAPI ASGITransport 進行異步測試。
+覆盖主要接口：登录/登出、授权校验、预测输出格式、未知彩种等。
+使用 httpx.AsyncClient + FastAPI ASGITransport 进行异步测试。
 """
 
 import pytest
@@ -23,7 +23,7 @@ async def client():
 @pytest_asyncio.fixture
 async def auth_headers(client):
     """辅助 fixture：获取认证后的 headers。"""
-    resp = await client.post("/api/login", json={"username": "admin", "password": "12333"})
+    resp = await client.post("/api/v1/login", json={"username": "admin", "password": "12333"})
     assert resp.status_code == 200
     token = resp.cookies.get("lottery_session")
     return {"Cookie": f"lottery_session={token}"}
@@ -51,32 +51,32 @@ class TestHealthCheck:
 
 class TestAuth:
     async def test_login_success(self, client):
-        resp = await client.post("/api/login", json={"username": "admin", "password": "12333"})
+        resp = await client.post("/api/v1/login", json={"username": "admin", "password": "12333"})
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
         assert "lottery_session" in resp.cookies
 
     async def test_login_wrong_password(self, client):
-        resp = await client.post("/api/login", json={"username": "admin", "password": "wrong"})
+        resp = await client.post("/api/v1/login", json={"username": "admin", "password": "wrong"})
         assert resp.status_code == 401
 
     async def test_login_empty_credentials(self, client):
-        resp = await client.post("/api/login", json={"username": "", "password": ""})
+        resp = await client.post("/api/v1/login", json={"username": "", "password": ""})
         assert resp.status_code == 401
 
     async def test_logout(self, client, auth_headers):
-        resp = await client.post("/api/logout", cookies=auth_headers)
+        resp = await client.post("/api/v1/logout", headers=auth_headers)
         assert resp.status_code == 200
 
     async def test_me_unauthenticated(self, client):
-        resp = await client.get("/api/me")
+        resp = await client.get("/api/v1/me")
         assert resp.status_code == 200
         data = resp.json()
         assert data["logged_in"] is False
 
     async def test_me_authenticated(self, client, auth_headers):
-        resp = await client.get("/api/me", cookies=auth_headers)
+        resp = await client.get("/api/v1/me", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.json()
         assert data["logged_in"] is True
@@ -90,27 +90,27 @@ class TestAuth:
 
 class TestAuthorization:
     async def test_unauthorized_cannot_access_recommend(self, client):
-        resp = await client.get("/api/recommend/ssq")
+        resp = await client.get("/api/v1/recommend/ssq")
         assert resp.status_code == 401
 
     async def test_unauthorized_cannot_access_predict(self, client):
-        resp = await client.get("/api/predict/ssq")
+        resp = await client.get("/api/v1/predict/ssq")
         assert resp.status_code == 401
 
     async def test_unauthorized_cannot_access_history(self, client):
-        resp = await client.get("/api/history/ssq")
+        resp = await client.get("/api/v1/history/ssq")
         assert resp.status_code == 401
 
     async def test_unauthorized_cannot_access_stats(self, client):
-        resp = await client.get("/api/stats/ssq")
+        resp = await client.get("/api/v1/stats/ssq")
         assert resp.status_code == 401
 
     async def test_unauthorized_cannot_access_ranking(self, client):
-        resp = await client.get("/api/ranking/ssq")
+        resp = await client.get("/api/v1/ranking/ssq")
         assert resp.status_code == 401
 
     async def test_authorized_can_access_recommend(self, client, auth_headers, sample_ssq_csv):
-        resp = await client.get("/api/recommend/ssq", cookies=auth_headers)
+        resp = await client.get("/api/v1/recommend/ssq", headers=auth_headers)
         assert resp.status_code == 200
 
 
@@ -121,31 +121,31 @@ class TestAuthorization:
 
 class TestBusinessAPIs:
     async def test_unknown_lottery_returns_400(self, client, auth_headers):
-        resp = await client.get("/api/recommend/invalid_code", cookies=auth_headers)
+        resp = await client.get("/api/v1/recommend/invalid_code", headers=auth_headers)
         assert resp.status_code == 400
 
     async def test_predict_model_not_found(self, client, auth_headers):
         """预测接口在模型未训练时应返回 404。"""
-        resp = await client.get("/api/predict/ssq?method=xgb", cookies=auth_headers)
+        resp = await client.get("/api/v1/predict/ssq?method=xgb", headers=auth_headers)
         assert resp.status_code == 404
 
     async def test_history_limit_validation(self, client, auth_headers, sample_ssq_csv):
         """参数边界校验：limit 应在 [1, 200] 范围内。"""
         # 合法值
-        resp = await client.get("/api/history/ssq?limit=30", cookies=auth_headers)
+        resp = await client.get("/api/v1/history/ssq?limit=30", headers=auth_headers)
         assert resp.status_code == 200
 
     async def test_ranking_params_validation(self, client, auth_headers, sample_ssq_csv):
         """ranking 参数边界校验。"""
         resp = await client.get(
-            "/api/ranking/ssq?window=100&backtest=20",
-            cookies=auth_headers,
+            "/api/v1/ranking/ssq?window=100&backtest=20",
+            headers=auth_headers,
         )
         assert resp.status_code == 200
 
     async def test_recommend_response_format(self, client, auth_headers, sample_ssq_csv):
         """推荐接口响应格式验证。"""
-        resp = await client.get("/api/recommend/ssq", cookies=auth_headers)
+        resp = await client.get("/api/v1/recommend/ssq", headers=auth_headers)
         if resp.status_code == 200:
             data = resp.json()
             assert "code" in data
@@ -163,7 +163,7 @@ class TestBusinessAPIs:
 class TestGlobalErrorHandler:
     async def test_internal_error_hides_details(self, client, auth_headers):
         """内部异常不应暴露文件路径等敏感信息。"""
-        resp = await client.get("/api/report/nonexistent", cookies=auth_headers)
+        resp = await client.get("/api/v1/report/nonexistent", headers=auth_headers)
         # 应返回 400 或 500，且不包含文件路径
         assert resp.status_code in (400, 404, 500)
         detail = resp.json().get("detail", "")

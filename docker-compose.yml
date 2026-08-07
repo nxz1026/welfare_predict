@@ -5,6 +5,7 @@
 #   3. 在项目目录打开 PowerShell
 #   4. docker-compose up -d
 #   5. 浏览器访问 http://localhost:8000
+#   （容器内监听 8080，映射到宿主机 8000）
 
 version: "3.8"
 
@@ -15,11 +16,10 @@ services:
       args:
         - LOTTERY_USER=${LOTTERY_USER:-admin}
         - LOTTERY_PASS=${LOTTERY_PASS:?LOTTERY_PASS must be set in .env}
-        - LOTTERY_SECRET=${LOTTERY_SECRET:-please-generate-a-random-secret}
     image: lottery-web:latest
     container_name: lottery-web
     ports:
-      - "8000:8000"
+      - "8000:8080"
     volumes:
       # 数据持久化 — 数据保存在项目目录的 data/ 下
       - ./data:/app/data
@@ -28,10 +28,9 @@ services:
       # 必须通过 .env 文件注入，请复制 .env.example 为 .env 并填写实际值
       - LOTTERY_USER=${LOTTERY_USER:-admin}
       - LOTTERY_PASS=${LOTTERY_PASS:?LOTTERY_PASS must be set in .env}
-      - LOTTERY_SECRET=${LOTTERY_SECRET:-please-generate-a-random-secret}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -15,7 +15,6 @@ XGBoost 基学习器（二分类方案）。
 from __future__ import annotations
 
 import numpy as np
-import tensorflow as tf
 from typing import Dict, List, Optional
 
 import xgboost as xgb
@@ -176,8 +175,13 @@ def build_sequence_model(
     window_size: int = 5,
     learning_rate: float = 0.001,
     name: str = "sequence_model",
-) -> tf.keras.Model:
-    """构建用于序列预测的 LSTM 模型（用于测试与快速原型）。"""
+):
+    """构建用于序列预测的 LSTM 模型（用于测试与快速原型）。
+
+    注意：此函数需要 TensorFlow，仅在需要序列模型时调用。
+    """
+    import tensorflow as tf
+
     inputs = tf.keras.layers.Input(
         shape=(window_size, spec.sequence_len), name=f"{name}_input"
     )
@@ -205,9 +209,9 @@ def build_sequence_model(
 
 def build_models_for_lottery(
     config: LotteryModelConfig, window_size: int
-) -> Dict[str, tf.keras.Model]:
+):
     """为红球和蓝球分别构建序列模型。"""
-    models: Dict[str, tf.keras.Model] = {}
+    models = {}
     red_spec = config.red
     models["red"] = build_sequence_model(
         red_spec,

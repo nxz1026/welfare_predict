@@ -38,6 +38,17 @@ class ModelIO:
 
         # 根据模型类型选择保存方式
         model_type = type(model).__name__
+
+        # StackingEnsemble 特殊处理：保存为目录
+        if model_type == "StackingEnsemble":
+            ensemble_dir = path.with_suffix("") if path.suffix else Path(str(path) + "_ensemble")
+            ensemble_dir.mkdir(parents=True, exist_ok=True)
+            model.save_model(str(ensemble_dir))
+            meta = {**(metadata or {}), 'type': 'stacking_ensemble', 'model_class': model_type}
+            meta_path = path.with_suffix('.meta.json')
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+            return
+
         has_save_method = hasattr(model, 'save') and callable(getattr(model, 'save'))
 
         if has_save_method:
@@ -78,7 +89,12 @@ class ModelIO:
         else:
             model_type = None
 
-        if model_type == 'keras':
+        if model_type == 'stacking_ensemble':
+            # 加载 StackingEnsemble
+            ensemble_dir = path.with_suffix("") if path.suffix else Path(str(path) + "_ensemble")
+            from .unified_pipeline import StackingEnsemble
+            return StackingEnsemble.load_model(str(ensemble_dir))
+        elif model_type == 'keras':
             import tensorflow as keras
             return keras.models.load_model(str(path))
         else:

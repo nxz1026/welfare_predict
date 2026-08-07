@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-训练与预测流程封装。
+训练与预测流程封装（已废弃）。
+
+.. deprecated::
+    本模块依赖 TensorFlow 且存在已知问题，已被 ``unified_pipeline`` 替代。
+    新代码应使用 ``from src.unified_pipeline import UnifiedPipeline``。
+    本模块将在未来版本中移除。
 
 暴露的核心函数：
 - train_lottery_models：基于历史数据训练模型并写入本地；
@@ -11,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -32,6 +38,12 @@ from .config import (
 from .data_fetcher import load_history
 from .data_sources import fetch_history, fetch_latest_issue, get_source
 from .modeling import build_models_for_lottery
+
+warnings.warn(
+    "src.pipeline 已废弃，请使用 src.unified_pipeline.UnifiedPipeline。",
+    DeprecationWarning,
+    stacklevel=2,
+)
 from .preprocessing import ComponentDataset, prepare_training_arrays, train_validation_split
 
 
