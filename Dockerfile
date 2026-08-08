@@ -12,20 +12,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# 系统编译依赖（lxml/scikit-learn 等需要）
-# DevCloud 预处理器会自动注入阿里云 APT 镜像，无需手动配置
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc g++ libxml2-dev libxslt1-dev && \
-    rm -rf /var/lib/apt/lists/*
-
-# 安装 Python 依赖（DevCloud 预处理器会自动注入阿里云 pip 镜像）
+# 安装 Python 依赖
+# DevCloud 预处理器会自动注入阿里云 pip 镜像，无需手动配置
+# lxml/scikit-learn/xgboost 均有 manylinux 预编译 wheel，无需系统编译依赖
 COPY requirements-min.txt ./
 RUN pip install --no-cache-dir -r requirements-min.txt
-
-# 清理编译依赖（减小镜像体积）
-RUN apt-get purge -y gcc g++ libxml2-dev libxslt1-dev && \
-    apt-get autoremove -y && \
-    rm -rf /var/lib/apt/lists/*
 
 # 复制项目文件
 COPY src/ src/
@@ -33,13 +24,8 @@ COPY config/ config/
 COPY static/ static/
 COPY scripts/ scripts/
 
-# 创建所有数据目录和非 root 用户
-RUN mkdir -p data/ssq data/sd data/3d data/qlc data/kl8 data/users model output && \
-    groupadd -r lottery && useradd -r -g lottery -d /app lottery && \
-    chown -R lottery:lottery /app
-
-# 以非 root 用户运行
-USER lottery
+# 创建运行时数据目录
+RUN mkdir -p data/ssq data/sd data/3d data/qlc data/kl8 data/users model output logs
 
 # 暴露端口（DevCloud 仅暴露 8080）
 EXPOSE 8080
