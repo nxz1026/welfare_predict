@@ -148,5 +148,11 @@ data/sessions.db
 # Docker 排除（P3-04 新增）
 .dockerignore
 
+# 临时/调试文件
+ck.txt
+cookie*.txt
+test_output.txt
+index_test.html
+
 # TODO 文件
 TODO.md

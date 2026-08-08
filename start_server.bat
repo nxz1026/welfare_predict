@@ -46,7 +46,7 @@ echo.
 echo ============================================================
 echo   Starting server...
 echo   URL: http://localhost:%PORT%
-echo   Login: admin / 12333  (change via .env)
+echo   Login: admin / (password set in .env)
 echo   Stop:  Ctrl+C
 echo ============================================================
 echo.

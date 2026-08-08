@@ -40,7 +40,7 @@ from src.session import create_session as db_create_session, validate_session, d
 # ============================================================
 
 USERNAME = os.getenv("LOTTERY_USER", "admin")
-PASSWORD = os.getenv("LOTTERY_PASS", "12333")
+PASSWORD = os.getenv("LOTTERY_PASS", "")
 SESSION_COOKIE = "lottery_session"
 SESSION_HOURS = 12
 DEBUG = os.getenv("DEBUG", "true").lower() in ("true", "1", "yes")
@@ -52,6 +52,12 @@ DEBUG = os.getenv("DEBUG", "true").lower() in ("true", "1", "yes")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化，关闭时清理。"""
+    # 安全检查：密码为空时拒绝启动
+    if not PASSWORD:
+        raise RuntimeError(
+            "LOTTERY_PASS 环境变量未设置！请在 .env 文件中设置登录密码。"
+            "参考 .env.example 获取配置说明。"
+        )
     from src.bootstrap import bootstrap
     bootstrap()
     cleaned = cleanup_expired()
@@ -95,9 +101,9 @@ def check_auth(request: Request) -> bool:
 
 
 def require_auth(request: Request) -> None:
-    """要求已登录，否则返回 401。"""
+    """登录验证：未登录时返回 401。"""
     if not check_auth(request):
-        raise HTTPException(status_code=401, detail="未登录")
+        raise HTTPException(status_code=401, detail="未登录或会话已过期")
 
 
 def get_current_user(request: Request) -> Optional[str]:
@@ -787,16 +793,27 @@ def _load_html(filename: str) -> str:
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    if not check_auth(request):
-        return RedirectResponse("/login")
-    return _load_html("index.html")
+    resp = HTMLResponse(_load_html("index.html"))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    if check_auth(request):
-        return RedirectResponse("/")
-    return _load_html("login.html")
+    resp = HTMLResponse(_load_html("login.html"))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    """返回空 favicon 避免 404 报错。"""
+    from fastapi.responses import Response
+    return Response(content=b"", media_type="image/x-icon")
 
 
 # 静态资源

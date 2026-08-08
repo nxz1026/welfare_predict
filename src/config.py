@@ -98,7 +98,7 @@ DEFAULT_DATA_SOURCE = DATA_SOURCE_CONFIG["default"]
 
 
 # ============================================================
-# 彩种配置（P2-01: 已移除 kl8，已迁移至独立项目）
+# 彩种配置
 # ============================================================
 LOTTERY_CONFIGS: Dict[str, LotteryModelConfig] = {
     "ssq": LotteryModelConfig(
@@ -181,8 +181,25 @@ LOTTERY_CONFIGS: Dict[str, LotteryModelConfig] = {
         default_blue_epochs=0,
         learning_rate=6e-4,
     ),
-    # NOTE: kl8（快乐8）已于 2025-10 迁移至独立项目，此处已移除。
-    # 如需恢复请查看 git tag v2.0-pre-kl8-cleanup
+    "kl8": LotteryModelConfig(
+        code="kl8",
+        name="快乐8",
+        red=SequenceModelSpec(
+            sequence_len=20,
+            num_classes=80,
+            embedding_dim=64,
+            hidden_units=(128, 64),
+            dropout=0.3,
+            min_val=1,
+            max_val=80,
+        ),
+        blue=None,
+        default_window=5,
+        default_batch_size=32,
+        default_red_epochs=60,
+        default_blue_epochs=0,
+        learning_rate=6e-4,
+    ),
     "sd": LotteryModelConfig(
         code="sd",
         name="福彩3D",

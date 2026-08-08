@@ -7,6 +7,9 @@ import pytest
 
 from src import config as project_config
 
+# 测试环境密码（与 test_api.py 中 auth_headers fixture 一致）
+os.environ.setdefault("LOTTERY_PASS", "testpass")
+
 
 @pytest.fixture(autouse=True)
 def isolate_paths(tmp_path) -> Iterator[None]:

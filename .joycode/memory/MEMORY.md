@@ -1,1 +1,1 @@
-- [multi-lottery-architecture](project_multi_lottery_architecture.md) — 多玩法彩票系统架构状态和关键设计决策
+- [multi-lottery-architecture](project_multi_lottery_architecture.md) — 多玩法彩票数据源架构和KL8趋势图解析要点

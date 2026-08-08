@@ -23,7 +23,7 @@ async def client():
 @pytest_asyncio.fixture
 async def auth_headers(client):
     """辅助 fixture：获取认证后的 headers。"""
-    resp = await client.post("/api/v1/login", json={"username": "admin", "password": "12333"})
+    resp = await client.post("/api/v1/login", json={"username": "admin", "password": "testpass"})
     assert resp.status_code == 200
     token = resp.cookies.get("lottery_session")
     return {"Cookie": f"lottery_session={token}"}
@@ -51,7 +51,7 @@ class TestHealthCheck:
 
 class TestAuth:
     async def test_login_success(self, client):
-        resp = await client.post("/api/v1/login", json={"username": "admin", "password": "12333"})
+        resp = await client.post("/api/v1/login", json={"username": "admin", "password": "testpass"})
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True

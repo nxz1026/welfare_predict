@@ -192,7 +192,7 @@
         <h1>🎰 福彩推荐系统</h1>
         <div class="header-actions">
             <span id="lottery-name" style="font-size:14px;opacity:0.9;">双色球</span>
-            <button onclick="logout()">退出</button>
+            <button id="auth-btn" onclick="logout()">退出</button>
         </div>
     </div>
 
@@ -200,7 +200,7 @@
         <div class="lottery-tab active" data-code="ssq" onclick="switchLottery('ssq')">双色球</div>
         <div class="lottery-tab" data-code="sd" onclick="switchLottery('sd')">福彩3D</div>
         <div class="lottery-tab" data-code="qlc" onclick="switchLottery('qlc')">七乐彩</div>
-        <div class="lottery-tab" data-code="kl8" onclick="switchLottery('kl8')" title="快乐8已迁移至独立项目">快乐8</div>
+        <div class="lottery-tab" data-code="kl8" onclick="switchLottery('kl8')">快乐8</div>
     </div>
 
     <div class="tabs">
@@ -386,11 +386,6 @@
         });
 
         function switchLottery(code) {
-            // 快乐8已迁移，点击时提示
-            if (code === 'kl8') {
-                alert('快乐8已于2025年10月迁移至独立项目，暂不支持在线使用。');
-                return;
-            }
             currentCode = code;
             document.querySelectorAll('.lottery-tab').forEach(t => {
                 t.classList.toggle('active', t.dataset.code === code);
@@ -430,6 +425,13 @@
                         </span>
                     `).join('');
                 blueContainer.style.display = 'none';
+            } else if (info.ballType === 'pick-n') {
+                // 快乐8: 选10个号码 (1-80)
+                redContainer.innerHTML = '<span style="font-size:13px;color:#e74c3c;font-weight:600;">选号(1-80):</span>'
+                    + [1,2,3,4,5,6,7,8,9,10].map(i => `
+                        <input class="num-input red-input" id="r${i}" maxlength="2" placeholder="${String(i).padStart(2,'0')}" style="width:36px;">
+                    `).join('');
+                blueContainer.style.display = 'none';
             } else if (info.ballType === 'red-special') {
                 // 七乐彩: 7红 + 1特别号
                 redContainer.innerHTML = '<span style="font-size:13px;color:#e74c3c;font-weight:600;">红球:</span>'
@@ -456,10 +458,18 @@
                 const res = await fetch('/api/v1/me');
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
-                if (!data.logged_in) window.location.href = '/login';
+                const btn = document.getElementById('auth-btn');
+                if (data.logged_in) {
+                    btn.textContent = '退出';
+                    btn.onclick = logout;
+                } else {
+                    btn.textContent = '登录';
+                    btn.onclick = () => { window.location.href = '/login'; };
+                }
             } catch(e) {
-                console.error('Auth check failed:', e);
-                // 不跳转，让用户继续使用（API调用会在需要时返回401）
+                const btn = document.getElementById('auth-btn');
+                btn.textContent = '登录';
+                btn.onclick = () => { window.location.href = '/login'; };
             }
         }
 
@@ -503,6 +513,10 @@
                         <div class="digit-label">${info.digitNames[i]}</div>
                     </span>
                 `).join('');
+            }
+            if (info.ballType === 'pick-n') {
+                // 快乐8: 紧凑显示多个号码
+                return reds.map(b => `<span class="ball red" style="width:28px;height:28px;line-height:28px;font-size:12px;margin:2px;">${b}</span>`).join('');
             }
             if (info.ballType === 'red-special') {
                 // 七乐彩: 红球 + 特别号(紫色)
@@ -562,21 +576,26 @@
                 const data = await res.json();
                 const info = LOTTERY_INFO[currentCode];
                 const headerRow = document.querySelector('#panel-history thead tr');
-                if (info.ballType === 'red-special') {
+                if (info.ballType === 'pick-n') {
+                    headerRow.innerHTML = '<th>期号</th><th>日期</th><th>开奖号码</th>';
+                } else if (info.ballType === 'red-special') {
                     headerRow.innerHTML = '<th>期号</th><th>日期</th><th>红球</th><th>特别号</th>';
                 } else if (info.hasBlue) {
                     headerRow.innerHTML = '<th>期号</th><th>日期</th><th>红球</th><th>蓝球</th>';
                 } else {
                     headerRow.innerHTML = '<th>期号</th><th>日期</th><th colspan="3">号码（百位 十位 个位）</th>';
                 }
-                body.innerHTML = data.records.map(r => `
-                    <tr>
-                        <td>${r.issue}</td>
-                        <td>${r.date}</td>
-                        <td colspan="${info.hasBlue ? '1' : '3'}">${info.hasBlue ? r.reds.join(' ') : r.reds.map((b, i) => `${info.digitNames[i]}:${b}`).join(' | ')}</td>
-                        ${info.hasBlue ? `<td>${r.blue || '-'}</td>` : ''}
-                    </tr>
-                `).join('');
+                body.innerHTML = data.records.map(r => {
+                    let numsHtml;
+                    if (info.ballType === 'pick-n') {
+                        numsHtml = `<td>${r.reds.join(' ')}</td>`;
+                    } else if (info.hasBlue) {
+                        numsHtml = `<td>${r.reds.join(' ')}</td><td>${r.blue || '-'}</td>`;
+                    } else {
+                        numsHtml = `<td colspan="3">${r.reds.map((b, i) => `${info.digitNames[i]}:${b}`).join(' | ')}</td>`;
+                    }
+                    return `<tr><td>${r.issue}</td><td>${r.date}</td>${numsHtml}</tr>`;
+                }).join('');
             } catch(e) {
                 console.error('loadHistory error:', e);
                 body.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#e74c3c;">历史数据加载失败，<a href="#" onclick="loadHistory();return false;" style="color:#3498db;">点击重试</a></td></tr>';
@@ -791,6 +810,7 @@
                         }
                     ]
                 });
+            }
             } catch(e) {
                 console.error('loadStats error:', e);
                 const hotChart = document.getElementById('hot-chart');
@@ -1057,7 +1077,35 @@
                 return { reds: digits, blue: null };
             }
 
-            // 双色球逻辑
+            if (info.ballType === 'pick-n') {
+                // 快乐8: 读取 r1-r10, 范围 1-80
+                const ids = ['r1','r2','r3','r4','r5','r6','r7','r8','r9','r10'];
+                const reds = [];
+                for (const id of ids) {
+                    const el = document.getElementById(id);
+                    if (!el) continue;
+                    const v = el.value.trim();
+                    if (v) {
+                        const n = parseInt(v, 10);
+                        if (isNaN(n) || n < 1 || n > 80) {
+                            el.classList.add('error');
+                        } else {
+                            el.classList.remove('error');
+                            reds.push(n);
+                        }
+                    } else {
+                        el.classList.remove('error');
+                    }
+                }
+                if (new Set(reds).size !== reds.length) {
+                    document.getElementById('custom-status').textContent = '号码不能重复';
+                    document.getElementById('custom-status').style.color = '#e74c3c';
+                    return null;
+                }
+                return { reds, blue: null };
+            }
+
+            // 双色球/七乐彩逻辑
             const ids = ['r1','r2','r3','r4','r5','r6'];
             const reds = [];
             for (const id of ids) {
