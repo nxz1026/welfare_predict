@@ -225,7 +225,8 @@
                 <select id="ml-method" onchange="loadMlPredict()">
                     <option value="xgb">XGBoost</option>
                     <option value="poisson">Poisson 先验</option>
-                    <!-- LSTM/Stacking 需要 TensorFlow，云环境不可用时隐藏 -->
+                    <option value="stacking" disabled style="color:#999;">Stacking 集成 (待升级)</option>
+                    <option value="lstm" disabled style="color:#999;">LSTM/MLP (待升级)</option>
                 </select>
                 <button onclick="loadMlPredict()" style="margin-left:8px;padding:6px 16px;background:#667eea;color:white;border:none;border-radius:6px;cursor:pointer;">运行预测</button>
                 <!-- 手动训练按钮已隐藏：系统每日 01:03 自动同步数据并智能训练 -->
@@ -515,12 +516,16 @@
                 if (!select) return;
                 select.innerHTML = '';
                 data.methods.forEach(m => {
+                    const opt = document.createElement('option');
+                    opt.value = m.id;
                     if (m.available) {
-                        const opt = document.createElement('option');
-                        opt.value = m.id;
                         opt.textContent = m.name;
-                        select.appendChild(opt);
+                    } else {
+                        opt.textContent = m.name + ' (待升级)';
+                        opt.disabled = true;
+                        opt.style.color = '#999';
                     }
+                    select.appendChild(opt);
                 });
             } catch (e) {
                 // 忽略，保留默认选项
@@ -639,7 +644,7 @@
                 } else if (info.hasBlue) {
                     headerRow.innerHTML = '<th>期号</th><th>日期</th><th>红球</th><th>蓝球</th>';
                 } else {
-                    headerRow.innerHTML = '<th>期号</th><th>日期</th><th colspan="3">号码（百位 十位 个位）</th>';
+                    headerRow.innerHTML = '<th>期号</th><th>日期</th><th>试机号</th><th colspan="3">号码（百位 十位 个位）</th>';
                 }
                 body.innerHTML = data.records.map(r => {
                     let numsHtml;
@@ -648,13 +653,14 @@
                     } else if (info.hasBlue) {
                         numsHtml = `<td>${r.reds.join(' ')}</td><td>${r.blue || '-'}</td>`;
                     } else {
-                        numsHtml = `<td colspan="3">${r.reds.map((b, i) => `${info.digitNames[i]}:${b}`).join(' | ')}</td>`;
+                        const tryCode = r.try_code ? `<td>${r.try_code}</td>` : '<td>-</td>';
+                        numsHtml = `${tryCode}<td colspan="3">${r.reds.map((b, i) => `${info.digitNames[i]}:${b}`).join(' | ')}</td>`;
                     }
                     return `<tr><td>${r.issue}</td><td>${r.date}</td>${numsHtml}</tr>`;
                 }).join('');
             } catch(e) {
                 console.error('loadHistory error:', e);
-                body.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#e74c3c;">历史数据加载失败，<a href="#" onclick="loadHistory();return false;" style="color:#3498db;">点击重试</a></td></tr>';
+                body.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:#e74c3c;">历史数据加载失败，<a href="#" onclick="loadHistory();return false;" style="color:#3498db;">点击重试</a></td></tr>';
             }
         }
 
@@ -1086,20 +1092,25 @@
                 } else {
                     status.textContent = `数据已更新: 新增 ${data.new_issues} 期, 共 ${data.total_issues} 期`;
                 }
-                // 自动运行所有 ML 训练
+                // 自动运行所有可用方法训练
                 status.textContent += '，正在自动训练模型...';
-                const methods = ['xgb', 'lstm', 'poisson', 'stacking'];
-                for (const m of methods) {
-                    const methodLabel = {'xgb': 'XGBoost', 'lstm': 'LSTM', 'poisson': 'Poisson 先验', 'stacking': 'Stacking 集成'};
-                    status.textContent = `正在训练 ${methodLabel[m]}...`;
-                    const trainRes = await fetch(`/api/v1/train/${currentCode}?method=${m}`, {method: 'POST'});
+                try {
+                    const trainRes = await fetch(`/api/v1/train/${currentCode}/all`, {method: 'POST'});
                     if (trainRes.ok) {
                         const td = await trainRes.json();
-                        status.textContent = `${methodLabel[m]} 完成 (MSE=${td.metrics.val_mse.toFixed(4)})`;
+                        const succeeded = td.results ? td.results.filter(r => r.success).length : 0;
+                        const failed = td.results ? td.results.filter(r => !r.success).length : 0;
+                        status.style.color = '#2ecc71';
+                        status.textContent = `✅ 训练完成: ${succeeded} 成功${failed > 0 ? `, ${failed} 失败` : ''}`;
+                    } else {
+                        const errData = await trainRes.json();
+                        status.style.color = '#f39c12';
+                        status.textContent = `⚠️ 训练部分失败: ${errData.detail || '未知错误'}`;
                     }
+                } catch (trainErr) {
+                    status.style.color = '#f39c12';
+                    status.textContent = `⚠️ 训练请求失败: ${trainErr.message}`;
                 }
-                status.style.color = '#2ecc71';
-                status.textContent += ` ✅ 全部训练完成`;
                 // 刷新推荐和历史
                 refreshAll();
                 loadMlPredict();
