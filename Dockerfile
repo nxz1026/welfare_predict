@@ -8,7 +8,7 @@
 #   3. DEBUG=false 以启用 cookie Secure 标志
 #   4. CORS_ORIGINS 设置为 DevCloud 分配的域名
 
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 WORKDIR /app
 
