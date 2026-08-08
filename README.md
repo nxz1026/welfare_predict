@@ -41,7 +41,7 @@
 
 ### 第一次安装
 
-**环境要求：** Python 3.9+，Windows / Linux / macOS 均可。
+**环境要求：** Python 3.13+，Windows / Linux / macOS 均可。
 
 ```bash
 # 1. 安装依赖
@@ -116,8 +116,10 @@ python scripts/get_data.py --code ssq
 
 ## Docker 部署（适合有服务器的用户）
 
+基于 Python 3.13-slim 镜像，端口 8080。
+
 ```bash
-# 1. 配置密码
+# 1. 配置密码（必须！不设密码容器无法启动）
 copy .env.example .env
 # 编辑 .env 填写实际密码
 
@@ -127,6 +129,8 @@ docker-compose up -d --build
 # 3. 访问
 http://localhost:8080
 ```
+
+> **注意：** `LOTTERY_PASS` 环境变量为必填项，缺失时服务拒绝启动。云平台部署请在平台控制台设置此环境变量。
 
 ---
 

@@ -142,7 +142,7 @@ welfare_predict/
 | 会话存储 | SQLite | 持久化多用户会话 |
 | 序列化 | ModelIO 统一接口 | joblib + TF native 自动分发 |
 | 日志 | loguru + config.yaml | loguru 格式语法 |
-| 部署 | Docker + Docker Compose | 端口 8080，含 healthcheck |
+| 部署 | Docker (Python 3.13-slim) | 端口 8080，含 healthcheck |
 
 ---
 
@@ -246,11 +246,25 @@ docker-compose up -d --build
 - 端口必须为 **8080**（平台要求）
 - `DEBUG=false` 以启用 cookie Secure 标志
 - `CORS_ORIGINS` 设置为实际域名
-- 支持 Dockerfile 部署（Python 项目）
+- 支持 Dockerfile 部署（Python 3.13-slim 基础镜像）
+- **必须**在平台控制台设置环境变量 `LOTTERY_PASS`（缺失时容器启动即崩溃）
+- 平台会自动重写基础镜像为京东云镜像源、注入 APT/pip 国内镜像
 
 ---
 
 ## 版本记录
+
+### v2.4 (2026-08-08)
+
+**Python 3.13 升级：**
+- Dockerfile 基础镜像从 `python:3.11-slim` 升级至 `python:3.13-slim`
+- 依赖版本适配 Python 3.13：numpy>=2.1、scikit-learn>=1.6、pandas>=2.2.3、xgboost>=2.1、lxml>=5.2
+- requirements-min.txt 标注 Python 3.13 兼容版本
+
+**DevCloud 部署完善：**
+- 明确 `LOTTERY_PASS` 环境变量为必填项，缺失时服务拒绝启动
+- 补充平台控制台环境变量配置说明
+- 补充平台镜像源自动重写说明
 
 ### v2.3 (2026-08-08)
 
@@ -290,4 +304,4 @@ docker-compose up -d --build
 
 ---
 
-*最后更新：2026-08-08 | 版本：v2.3*
+*最后更新：2026-08-08 | 版本：v2.4*
