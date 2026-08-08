@@ -137,11 +137,6 @@
         document.getElementById('password').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') doLogin();
         });
-
-        // 页面加载后自动尝试一键登录
-        window.addEventListener('load', () => {
-            quickLogin();
-        });
     </script>
 </body>
 </html>

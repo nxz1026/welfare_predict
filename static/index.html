@@ -495,6 +495,15 @@
             }
         }
 
+        // 401 跳转登录页
+        function handleAuth(response) {
+            if (response.status === 401) {
+                window.location.href = '/login';
+                return true;
+            }
+            return false;
+        }
+
         async function refreshAll() {
             await Promise.all([
                 loadRecommend(),
@@ -550,6 +559,7 @@
             const grid = document.getElementById('recommend-grid');
             try {
                 const res = await fetch(`/api/v1/recommend/${currentCode}`);
+                if (handleAuth(res)) return;
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
                 grid.innerHTML = data.strategies.map(s => `
@@ -572,6 +582,7 @@
             const body = document.getElementById('history-body');
             try {
                 const res = await fetch(`/api/v1/history/${currentCode}?limit=30`);
+                if (handleAuth(res)) return;
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
                 const info = LOTTERY_INFO[currentCode];
@@ -606,6 +617,7 @@
         async function loadStats() {
             try {
                 const res = await fetch(`/api/v1/stats/${currentCode}?periods=30`);
+                if (handleAuth(res)) return;
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
                 const info = LOTTERY_INFO[currentCode];
