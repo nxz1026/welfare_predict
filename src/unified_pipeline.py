@@ -26,7 +26,10 @@ from loguru import logger
 from .config import LotteryModelConfig, get_lottery_config, ensure_runtime_directories
 from .feature_engineering import build_feature_matrix, build_binary_labels
 from .modeling import XGBoostPredictor
-from .model_lstm import LSTMPredictor
+try:
+    from .model_lstm import LSTMPredictor
+except ImportError:
+    LSTMPredictor = None  # TensorFlow 未安装时不可用
 from .model_poisson import PoissonPrior
 from .model_io import ModelIO
 
@@ -132,6 +135,8 @@ class UnifiedPipeline:
             self.model = XGBoostPredictor(self.config, **kwargs)
             self.model.train(X_train, y_train)
         elif self.method == "lstm":
+            if LSTMPredictor is None:
+                raise ImportError("TensorFlow 未安装，无法使用 LSTM/MLP 方法。请安装 tensorflow。")
             self.model = LSTMPredictor(self.config, **kwargs)
             self.model.train(X_train, y_train)
         elif self.method == "poisson":
@@ -192,6 +197,8 @@ class UnifiedPipeline:
         xgb_model = XGBoostPredictor(self.config, **kwargs)
         xgb_model.train(X_train, y_train)
 
+        if LSTMPredictor is None:
+            raise ImportError("TensorFlow 未安装，无法使用 Stacking 方法（需要 LSTM 基学习器）。请安装 tensorflow。")
         lstm_model = LSTMPredictor(self.config, **kwargs)
         lstm_model.train(X_train, y_train)
 

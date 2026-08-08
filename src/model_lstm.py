@@ -13,6 +13,10 @@ P1-02 修复说明：
 
 如果未来需要真正的时序建模，应在 preprocessing 阶段构建窗口序列特征，
 而非在此处用 reshape 强行适配。
+
+P3-04 修复说明：
+TensorFlow 改为懒加载，避免在未安装 TF 的环境（如 Docker min 镜像）
+中因顶层 import 导致 ImportError 崩溃。TF 仅在实际训练/预测时加载。
 """
 
 from __future__ import annotations
@@ -20,10 +24,28 @@ from __future__ import annotations
 import numpy as np
 from typing import Optional
 
-import tensorflow as tf
 from loguru import logger
 
 from .config import LotteryModelConfig
+
+# TensorFlow 懒加载：仅在需要时导入，避免未安装 TF 时整个模块无法导入
+_tf = None
+
+
+def _get_tf():
+    """延迟导入 TensorFlow，未安装时抛出友好错误。"""
+    global _tf
+    if _tf is None:
+        try:
+            import tensorflow
+            _tf = tensorflow
+        except ImportError:
+            raise ImportError(
+                "TensorFlow 未安装。MLP/LSTM 模型需要 TensorFlow，"
+                "请运行: pip install tensorflow==2.15.1 keras==2.15.0"
+                "或使用 requirements.txt 安装完整依赖。"
+            )
+    return _tf
 
 
 class LSTMPredictor:
@@ -46,7 +68,7 @@ class LSTMPredictor:
         self.config = config
         self.num_classes = config.red.num_classes  # 33
         self.sequence_len = config.red.sequence_len  # 6
-        self.model: Optional[tf.keras.Model] = None
+        self.model = None  # 延迟创建，避免模块加载时依赖 TF
         self.is_trained = False
 
         self.hidden_units = hidden_units
@@ -55,8 +77,9 @@ class LSTMPredictor:
         self.batch_size = batch_size
         self.epochs = epochs
 
-    def _build_model(self, input_shape: tuple) -> tf.keras.Model:
+    def _build_model(self, input_shape: tuple):
         """构建 MLP 模型（替代原来的 LSTM）。"""
+        tf = _get_tf()
         inputs = tf.keras.layers.Input(shape=input_shape, name="mlp_input")
 
         x = inputs
@@ -87,6 +110,7 @@ class LSTMPredictor:
             X: (n_samples, n_features) 特征矩阵
             y: (n_samples, num_classes) 二值标签矩阵
         """
+        tf = _get_tf()
         logger.info("训练 MLP 模型 (输入维度: {}, 输出维度: {})", X.shape[1], y.shape[1])
 
         # 直接使用特征矩阵，无需 reshape（P1-02 修复）
@@ -162,6 +186,7 @@ class LSTMPredictor:
 
     def load_model(self, path: str) -> None:
         """加载模型"""
+        tf = _get_tf()
         self.model = tf.keras.models.load_model(path)
         self.is_trained = True
         logger.info("MLP 模型已加载: {}", path)

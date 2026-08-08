@@ -95,8 +95,14 @@ class ModelIO:
             from .unified_pipeline import StackingEnsemble
             return StackingEnsemble.load_model(str(ensemble_dir))
         elif model_type == 'keras':
-            import tensorflow as keras
-            return keras.models.load_model(str(path))
+            try:
+                import tensorflow as keras
+                return keras.models.load_model(str(path))
+            except ImportError:
+                raise ImportError(
+                    "TensorFlow 未安装，无法加载 Keras 模型。"
+                    "请安装 tensorflow 或使用 XGBoost/Poisson 方法。"
+                )
         else:
             return joblib.load(path)
 
