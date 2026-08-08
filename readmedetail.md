@@ -63,6 +63,7 @@ welfare_predict/
 │   ├── api.py                    # FastAPI Web 服务（/api/v1/ 路由前缀）
 │   ├── session.py                # SQLite 持久化会话管理
 │   ├── bootstrap.py              # 启动引导 + 数据同步
+│   ├── scheduler.py              # APScheduler 定时任务（每日数据同步 + 智能训练）
 │   ├── data_fetcher.py           # 数据抓取（KL8趋势图 + 增量合并）
 │   ├── recommendation.py         # 多策略推荐引擎（四种策略）
 │   ├── unified_pipeline.py       # ML 训练/预测管线（Stacking 实现）
@@ -123,8 +124,10 @@ welfare_predict/
 | GET | `/api/v1/ranking/{code}` | 策略排行榜（`?window=200&backtest=50`） |
 | GET | `/api/v1/report/{code}` | 综合分析报告 |
 | POST | `/api/v1/custom-recommend/{code}` | 自选AI推荐 |
-| POST | `/api/v1/train/{code}` | 模型训练 |
-| GET | `/api/v1/train/{code}/status` | 训练状态查询 |
+| POST | `/api/v1/train/{code}` | 模型训练（`?method=xgb/poisson/stacking/lstm`） |
+| POST | `/api/v1/train/{code}/all` | 批量训练所有可用方法 |
+| GET | `/api/v1/train/methods` | 查询可用训练方法及状态 |
+| GET | `/api/v1/train/{code}/status` | 训练状态查询（含 train_status.json） |
 | POST | `/api/v1/data/update/{code}` | 增量数据更新 |
 
 `{code}` 取值：`ssq`（双色球）、`sd`（福彩3D）、`qlc`（七乐彩）、`kl8`（快乐8）
@@ -139,10 +142,11 @@ welfare_predict/
 | 前端 | 原生 HTML + ECharts | 零构建工具，多彩种切换 |
 | ML 核心 | XGBoost + MLP + Poisson + Stacking | 四种基学习器 + 元学习器 |
 | 特征工程 | NumPy/Pandas 向量化 | O(n²)→O(n) 优化 |
+| 定时任务 | APScheduler BackgroundScheduler | 每日 01:03 BJT 数据同步 + 智能训练 |
 | 会话存储 | SQLite | 持久化多用户会话 |
 | 序列化 | ModelIO 统一接口 | joblib + TF native 自动分发 |
 | 日志 | loguru + config.yaml | loguru 格式语法 |
-| 部署 | Docker (Python 3.13-slim) | 端口 8080，含 healthcheck |
+| 部署 | Docker (Python 3.13-slim) / FastAPI Cloud | 端口 8080，含 healthcheck |
 
 ---
 
@@ -153,17 +157,46 @@ welfare_predict/
 | 双色球 | datachart.500.com/ssq/ | 标准 history.shtml | 启动自动增量同步 |
 | 福彩3D | datachart.500.com/3d/ | 标准 history.shtml | 启动自动增量同步 |
 | 七乐彩 | datachart.500.com/qlc/ | 标准 history.shtml | 启动自动增量同步 |
-| 快乐8 | datachart.500.com/kl8/ | 趋势图（80列遗漏值） | 手动触发 |
+| 快乐8 | datachart.500.com/kl8/ | 趋势图（80列遗漏值） | 数据源不可用 |
+
+**天行数据源（已弃用）：**
+- `TianyanAPISource` 已标记 deprecated，`fetch_history()` 将抛出 `ValueError`
+- 天行平台（api.tianapi.com）230+ API 中无彩票类接口，原 `txapi/lottery/index` 返回 404
+- 代码保留但不再使用，未来可替换为其他数据源
 
 **KL8 趋势图解析要点：**
 - 使用 `datachart.500.com/kl8/` 趋势图页面，非标准 `history.shtml`
 - 80 列遗漏值格式，通过 `chartBall01` CSS 类识别当期开奖号码（20个）
 - 日期从期号推导（"最新期≈当前日期"参考点推算）
 - 启动时不自动同步（`ACTIVE_LOTTERY_CODES` 排除 kl8）
+- 当前数据源不可用，前端已隐藏 KL8 标签页，后端逻辑保留待恢复
 
 **福彩3D 试机号：**
 - `_repair_sd_data(merge=True)` 从 3d/data.csv 合并试机号到 sd/data.csv
 - 3d/data.csv 中 `tryCode=-1` 表示无数据，合并时自动过滤
+- 前端历史数据表和开奖详情表均展示试机号列
+
+---
+
+## 定时任务与智能训练
+
+### 数据同步触发方式
+
+| 触发方式 | 时机 | 说明 |
+|----------|------|------|
+| 启动引导 | 服务启动时 | `sync_startup_data()` 检查数据充足性并增量同步 |
+| 定时任务 | 每日 01:03 BJT | `APScheduler` CronTrigger 自动执行 |
+| 手动触发 | 用户点击"更新数据" | `POST /api/v1/data/update/{code}` |
+
+### 智能训练机制
+
+- **train_status.json**：每个彩种 `data/{code}/train_status.json` 记录上次训练状态
+  - `last_trained_issues`: 上次训练时的最新期号
+  - `last_trained_at`: 上次训练时间
+  - `trained_methods` / `failed_methods`: 成功/失败的方法列表
+- **增量判断**：同步后比较当前最新期号与 `last_trained_issues`，仅在有新数据时触发训练
+- **方法可用性检测**：`_get_unavailable_methods()` 运行时检测 TensorFlow 是否可用，不可用方法返回 400 错误并提示
+- **批量训练**：`POST /train/{code}/all` 仅训练可用方法，跳过不可用方法
 
 ---
 
@@ -188,7 +221,7 @@ welfare_predict/
 | `DEBUG` | 否 | `true` | 调试模式（生产环境设 false） |
 | `PORT` | 否 | `8000` | 服务端口（DevCloud 必须 8080） |
 | `CORS_ORIGINS` | 否 | `http://localhost:8000` | CORS 允许来源，逗号分隔 |
-| `TIANYAN_API_KEY` | 否 | — | 天行数据 API key |
+| `TIANYAN_API_KEY` | 否 | — | 天行数据 API key（已弃用，无需配置） |
 
 ---
 
@@ -250,9 +283,41 @@ docker-compose up -d --build
 - **必须**在平台控制台设置环境变量 `LOTTERY_PASS`（缺失时容器启动即崩溃）
 - 平台会自动重写基础镜像为京东云镜像源、注入 APT/pip 国内镜像
 
+### FastAPI Cloud
+
+- 推送 GitHub 仓库后自动构建部署
+- 平台运行 Python 3.13+，TensorFlow 不可用
+- LSTM/Stacking 方法前端显示为"待升级"（disabled），XGBoost/Poisson 正常可用
+- 端口由平台自动分配
+- **必须**在平台控制台设置环境变量 `LOTTERY_PASS`
+- 定时任务（APScheduler）在容器内正常运行
+
 ---
 
 ## 版本记录
+
+### v2.5 (2026-08-08)
+
+**云平台适配与自动化：**
+- 新增 APScheduler 定时任务：每日 01:03（北京时间）自动增量同步 + 智能训练
+- 智能训练机制：train_status.json 持久化，仅在有新数据时触发训练
+- 批量训练接口：`POST /train/{code}/all` 一键训练所有可用方法
+- 方法可用性查询：`GET /train/methods` 运行时检测 TensorFlow 可用性
+- 不可用方法优雅处理：LSTM/Stacking 不可用时返回 400 + 原因说明，前端显示"待升级"
+
+**数据源更新：**
+- 天行数据源（TianyanAPISource）标记 deprecated，确认平台无彩票 API
+- 快乐8数据源不可用，前端隐藏标签页，后端逻辑保留待恢复
+- 福彩3D 历史数据表新增试机号列展示
+
+**前端优化：**
+- 方法选择器动态加载：不可用方法显示"(待升级)"并置灰禁选
+- "更新数据"按钮改用批量训练接口，避免对不可用方法发起注定失败的请求
+- 隐藏手动训练按钮（系统自动训练），保留更新数据按钮
+
+**FastAPI Cloud 部署支持：**
+- 推送 GitHub 自动构建部署
+- Python 3.13+ 环境下 TensorFlow 不可用的完整降级方案
 
 ### v2.4 (2026-08-08)
 
@@ -304,4 +369,4 @@ docker-compose up -d --build
 
 ---
 
-*最后更新：2026-08-08 | 版本：v2.4*
+*最后更新：2026-08-08 | 版本：v2.5*
