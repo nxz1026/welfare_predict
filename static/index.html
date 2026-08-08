@@ -200,7 +200,8 @@
         <div class="lottery-tab active" data-code="ssq" onclick="switchLottery('ssq')">双色球</div>
         <div class="lottery-tab" data-code="sd" onclick="switchLottery('sd')">福彩3D</div>
         <div class="lottery-tab" data-code="qlc" onclick="switchLottery('qlc')">七乐彩</div>
-        <div class="lottery-tab" data-code="kl8" onclick="switchLottery('kl8')">快乐8</div>
+        <!-- KL8: 数据源不可用，前端已隐藏。后端逻辑代码保留并标注 -->
+        <!-- <div class="lottery-tab" data-code="kl8" onclick="switchLottery('kl8')">快乐8</div> -->
     </div>
 
     <div class="tabs">
@@ -223,12 +224,12 @@
                 <label style="margin-right:8px;">方法：</label>
                 <select id="ml-method" onchange="loadMlPredict()">
                     <option value="xgb">XGBoost</option>
-                    <option value="lstm">LSTM</option>
                     <option value="poisson">Poisson 先验</option>
-                    <option value="stacking">Stacking 集成</option>
+                    <!-- LSTM/Stacking 需要 TensorFlow，云环境不可用时隐藏 -->
                 </select>
                 <button onclick="loadMlPredict()" style="margin-left:8px;padding:6px 16px;background:#667eea;color:white;border:none;border-radius:6px;cursor:pointer;">运行预测</button>
-                <button onclick="trainModel()" style="margin-left:8px;padding:6px 16px;background:#2ecc71;color:white;border:none;border-radius:6px;cursor:pointer;">执行训练</button>
+                <!-- 手动训练按钮已隐藏：系统每日 01:03 自动同步数据并智能训练 -->
+                <!-- <button onclick="trainModel()" style="margin-left:8px;padding:6px 16px;background:#2ecc71;color:white;border:none;border-radius:6px;cursor:pointer;">执行训练</button> -->
                 <button onclick="updateData()" style="margin-left:8px;padding:6px 16px;background:#f39c12;color:white;border:none;border-radius:6px;cursor:pointer;">更新数据</button>
                 <span id="train-status" style="margin-left:12px;font-size:13px;color:#999;"></span>
             </div>
@@ -504,11 +505,55 @@
             return false;
         }
 
+        // 动态加载可用训练方法（隐藏不可用的 LSTM/Stacking）
+        async function loadAvailableMethods() {
+            try {
+                const res = await fetch('/api/v1/train/methods');
+                if (!res.ok) return;
+                const data = await res.json();
+                const select = document.getElementById('ml-method');
+                if (!select) return;
+                select.innerHTML = '';
+                data.methods.forEach(m => {
+                    if (m.available) {
+                        const opt = document.createElement('option');
+                        opt.value = m.id;
+                        opt.textContent = m.name;
+                        select.appendChild(opt);
+                    }
+                });
+            } catch (e) {
+                // 忽略，保留默认选项
+            }
+        }
+
+        // 显示训练状态
+        async function showTrainStatus() {
+            const statusEl = document.getElementById('train-status');
+            if (!statusEl) return;
+            try {
+                const res = await fetch(`/api/v1/train/${currentCode}/status?method=xgb`);
+                if (!res.ok) return;
+                const data = await res.json();
+                if (data.already_trained) {
+                    statusEl.textContent = `✅ 模型已训练 (${data.n_samples} 样本, ${data.issues_count} 期数据)`;
+                    statusEl.style.color = '#27ae60';
+                } else {
+                    statusEl.textContent = '⏳ 待训练（每日 01:03 自动训练）';
+                    statusEl.style.color = '#f39c12';
+                }
+            } catch (e) {
+                statusEl.textContent = '';
+            }
+        }
+
         async function refreshAll() {
             await Promise.all([
                 loadRecommend(),
                 loadHistory(),
                 loadStats(),
+                loadAvailableMethods(),
+                showTrainStatus(),
             ]);
         }
 
@@ -968,7 +1013,7 @@
                 const msg = e.message || '未知错误';
                 let hint = '';
                 if (msg.includes('404') || msg.includes('未找到') || msg.includes('未训练')) {
-                    hint = '<br>请先点击「执行训练」按钮训练模型';
+                    hint = '<br>模型尚未训练，系统每日 01:03 自动训练，请稍后再试';
                 }
                 grid.innerHTML = `<div class="card" style="text-align:center;padding:40px;color:#e74c3c;">预测失败: ${msg}${hint}</div>`;
             }

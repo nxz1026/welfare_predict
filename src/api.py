@@ -65,7 +65,26 @@ async def lifespan(app: FastAPI):
     if cleaned > 0:
         from loguru import logger
         logger.info(f"清理了 {cleaned} 个过期会话")
+
+    # 启动定时调度器（每日 01:03 BJT 数据同步 + 智能训练）
+    scheduler = None
+    try:
+        from src.scheduler import setup_scheduler
+        scheduler = setup_scheduler()
+        scheduler.start()
+        from loguru import logger
+        logger.info("定时调度器已启动")
+    except Exception as e:
+        from loguru import logger
+        logger.warning(f"定时调度器启动失败（定时任务不可用）: {e}")
+
     yield
+
+    # 关闭调度器
+    if scheduler:
+        scheduler.shutdown(wait=False)
+        from loguru import logger
+        logger.info("定时调度器已关闭")
 
 app = FastAPI(title="福彩推荐系统", version="2.1", lifespan=lifespan)
 
@@ -105,6 +124,17 @@ def require_auth(request: Request) -> None:
     """登录验证：未登录时返回 401。"""
     if not check_auth(request):
         raise HTTPException(status_code=401, detail="未登录或会话已过期")
+
+
+def _get_unavailable_methods() -> dict:
+    """返回当前环境不可用的训练方法及原因。"""
+    unavailable = {}
+    try:
+        import tensorflow  # noqa: F401
+    except ImportError:
+        unavailable["lstm"] = "TensorFlow 未安装，LSTM 方法不可用"
+        unavailable["stacking"] = "TensorFlow 未安装，Stacking 方法需要 LSTM 基学习器"
+    return unavailable
 
 
 def get_current_user(request: Request) -> Optional[str]:
@@ -511,6 +541,14 @@ async def api_train(
     if code not in LOTTERY_CONFIGS:
         raise HTTPException(400, f"未知彩种: {code}")
 
+    # 检查方法是否可用（LSTM/Stacking 需要 TensorFlow）
+    unavailable_methods = _get_unavailable_methods()
+    if method in unavailable_methods:
+        raise HTTPException(
+            400,
+            detail=f"训练方法 '{method}' 当前不可用: {unavailable_methods[method]}",
+        )
+
     try:
         df = await asyncio.to_thread(load_history, code)
         pipeline = UnifiedPipeline(code, method=method)
@@ -524,10 +562,75 @@ async def api_train(
             "n_features": summary.n_features,
             "metrics": summary.metrics,
         }
+    except ImportError as e:
+        from loguru import logger
+        logger.warning(f"训练方法不可用: {e}")
+        raise HTTPException(400, detail=f"训练方法不可用: {e}")
     except Exception as e:
         from loguru import logger
         logger.error(f"训练失败: {e}")
         raise HTTPException(500, detail=f"训练失败: {e}")
+
+
+@v1.post("/train/{code}/all")
+async def api_train_all(request: Request, code: str):
+    """批量训练所有可用方法（xgb + poisson + stacking/lstm 如可用）。"""
+    require_auth(request)
+    if code not in LOTTERY_CONFIGS:
+        raise HTTPException(400, f"未知彩种: {code}")
+
+    unavailable = _get_unavailable_methods()
+    methods = ["xgb", "poisson"]
+    # stacking/lstm 需要 TensorFlow
+    if "stacking" not in unavailable:
+        methods.append("stacking")
+    if "lstm" not in unavailable:
+        methods.append("lstm")
+
+    df = await asyncio.to_thread(load_history, code)
+    results = []
+    for m in methods:
+        try:
+            pipeline = UnifiedPipeline(code, method=m)
+            summary = await asyncio.to_thread(pipeline.train, df)
+            results.append({
+                "method": m,
+                "ok": True,
+                "n_samples": summary.n_samples,
+                "n_features": summary.n_features,
+                "metrics": summary.metrics,
+            })
+        except Exception as e:
+            from loguru import logger
+            logger.error(f"训练 {m} 失败: {e}")
+            results.append({"method": m, "ok": False, "error": str(e)})
+
+    return {
+        "code": code,
+        "name": LOTTERY_CONFIGS[code].name,
+        "results": results,
+        "trained_methods": [r["method"] for r in results if r["ok"]],
+        "failed_methods": [r["method"] for r in results if not r["ok"]],
+    }
+
+
+@v1.get("/train/methods")
+async def api_train_methods(request: Request):
+    """查询可用的训练方法。"""
+    require_auth(request)
+    all_methods = ["xgb", "poisson", "stacking", "lstm"]
+    unavailable = _get_unavailable_methods()
+    return {
+        "methods": [
+            {
+                "id": m,
+                "name": {"xgb": "XGBoost", "poisson": "泊松分布", "stacking": "Stacking 集成", "lstm": "LSTM/MLP"}[m],
+                "available": m not in unavailable,
+                "reason": unavailable.get(m, ""),
+            }
+            for m in all_methods
+        ]
+    }
 
 
 @v1.get("/train/{code}/status")
@@ -543,6 +646,7 @@ async def api_train_status(
     import json
     from pathlib import Path
     from src.config import PATHS
+    from src.scheduler import load_train_status
 
     df = load_history(code)
     if df.empty:
@@ -561,12 +665,20 @@ async def api_train_status(
     # 训练集用的是最近 N 期（df 降序取前 split_idx 行），
     # 因此比较 current_issues（升序）的后 N 个
     if trained_issues and trained_issues == current_issues[-len(trained_issues):]:
-        return {
+        result = {
             "already_trained": True,
             "n_samples": summary.get("n_samples", 0),
             "issues_count": len(current_issues),
             "method": method,
         }
+        # 附加 train_status.json 中的信息
+        ts = load_train_status(code)
+        if ts:
+            result["last_trained_at"] = ts.get("last_trained_at")
+            result["trained_methods"] = ts.get("trained_methods", [])
+            result["failed_methods"] = ts.get("failed_methods", [])
+            result["training_ok"] = ts.get("training_ok", True)
+        return result
     return {"already_trained": False, "issues_count": len(current_issues)}
 
 

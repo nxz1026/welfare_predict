@@ -181,6 +181,8 @@ LOTTERY_CONFIGS: Dict[str, LotteryModelConfig] = {
         default_blue_epochs=0,
         learning_rate=6e-4,
     ),
+    # KL8: 数据源不可用（天行数据API已下线，500.com趋势图解析不稳定），前端已隐藏
+    # 后端逻辑代码保留供参考
     "kl8": LotteryModelConfig(
         code="kl8",
         name="快乐8",

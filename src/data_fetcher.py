@@ -101,6 +101,7 @@ class LotteryHttpClient:
 def _build_history_url(config: LotteryModelConfig, start: Optional[int], end: Optional[int]) -> str:
     base = f"https://datachart.500.com/{config.code}/history/"
 
+    # KL8: 数据源不可用（天行数据API已下线，500.com趋势图解析不稳定），前端已隐藏
     # 快乐8: 使用趋势图页面（80列遗漏值格式），返回近 30 期
     if config.code == "kl8":
         return "https://datachart.500.com/kl8/"
@@ -122,6 +123,9 @@ def _build_history_url(config: LotteryModelConfig, start: Optional[int], end: Op
 
 def _parse_kl8_trend_chart(html: str) -> pd.DataFrame:
     """解析快乐8趋势图页面（80列遗漏值格式）。
+
+    KL8: 数据源不可用（天行数据API已下线，500.com趋势图解析不稳定），前端已隐藏。
+    后端逻辑代码保留供参考。
 
     趋势图每行包含：期号 + 80列数值。
     value=1 表示该号码在本期出现，>1 为遗漏次数。

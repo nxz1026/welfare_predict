@@ -81,7 +81,12 @@ class Web500Source(DataSource):
 
 
 class TianyanAPISource(DataSource):
-    """天行数据 API"""
+    """天行数据 API
+
+    .. deprecated::
+        天行数据已下线彩票 API（2024），该数据源不可用。
+        保留代码供参考，实际使用时会抛出 ValueError。
+    """
 
     def __init__(self, api_key: Optional[str] = None) -> None:
         self.api_key = api_key or os.getenv("TIANYAN_API_KEY")
@@ -97,51 +102,11 @@ class TianyanAPISource(DataSource):
         start_issue: Optional[int] = None,
         end_issue: Optional[int] = None,
     ) -> pd.DataFrame:
-        """通过天行数据 API 获取"""
-        if not self.api_key:
-            raise ValueError("天行数据 API key 未设置")
-
-        from .config import LOTTERY_CONFIGS
-        cfg = LOTTERY_CONFIGS.get(code)
-        if cfg is None:
-            raise ValueError(f"未知彩种: {code}")
-
-        # 天行数据接口
-        url = "https://api.tianapi.com/txapi/lottery/index"
-        params = {
-            "key": self.api_key,
-            "code": code,
-            "num": 100,
-        }
-
-        import requests
-        resp = requests.get(url, params=params, timeout=30)
-        data = resp.json()
-
-        if data.get("code") != 200:
-            raise ValueError(f"API 错误: {data.get('msg')}")
-
-        records = data.get("newslist", [])
-        if not records:
-            raise ValueError("API 返回空数据")
-
-        red_len = cfg.red.sequence_len
-        blue_len = cfg.blue.sequence_len if cfg.blue else 0
-
-        # 动态映射 API 字段到标准列名
-        rows = []
-        for record in records:
-            row = {"期数": record.get("expect")}
-            for i in range(1, red_len + 1):
-                row[f"红球_{i}"] = int(record.get(f"red{i}", 0))
-            if blue_len > 0:
-                for i in range(1, blue_len + 1):
-                    row[f"蓝球_{i}"] = int(record.get(f"blue{i}" if blue_len > 1 else "blue", 0))
-            rows.append(row)
-
-        df = pd.DataFrame(rows)
-        df.sort_values("期数", inplace=True)
-        return df.reset_index(drop=True)
+        """通过天行数据 API 获取 — 已废弃，API 已下线。"""
+        raise ValueError(
+            "天行数据彩票 API 已下线（api.tianapi.com/txapi/lottery/index 返回 404），"
+            "该数据源不可用。请使用 500.com 或本地 CSV 数据源。"
+        )
 
 
 class LocalCSVSource(DataSource):
