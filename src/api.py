@@ -52,11 +52,12 @@ DEBUG = os.getenv("DEBUG", "true").lower() in ("true", "1", "yes")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化，关闭时清理。"""
-    # 安全检查：密码为空时拒绝启动
+    # 安全检查：密码为空时警告但不阻止启动（云环境可能通过其他方式保护）
     if not PASSWORD:
-        raise RuntimeError(
-            "LOTTERY_PASS 环境变量未设置！请在 .env 文件中设置登录密码。"
-            "参考 .env.example 获取配置说明。"
+        from loguru import logger
+        logger.warning(
+            "LOTTERY_PASS 环境变量未设置！登录功能将不可用。"
+            "请在环境变量中设置登录密码。参考 .env.example 获取配置说明。"
         )
     from src.bootstrap import bootstrap
     bootstrap()

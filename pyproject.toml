@@ -2,7 +2,7 @@
 name = "welfare-predict"
 version = "2.4.0"
 description = "福彩推荐系统 — 面向彩票店老板的号码推荐工具"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "requests>=2.32.3",
     "beautifulsoup4>=4.12.3",
