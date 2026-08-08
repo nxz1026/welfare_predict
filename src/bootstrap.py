@@ -202,10 +202,8 @@ def bootstrap() -> None:
     1. configure_logging() — 初始化日志
     2. ensure_runtime_directories() — 创建必要目录
     3. _init_session_db() — 初始化会话数据库
-    4. sync_startup_data() — 检查数据充足性并同步增量数据（可通过 SKIP_DATA_SYNC 跳过）
+    4. sync_startup_data() — 检查数据充足性并同步增量数据
     """
-    import os
-
     configure_logging()
 
     from src.config import ensure_runtime_directories
@@ -214,18 +212,13 @@ def bootstrap() -> None:
     from src.session import _get_conn
     _get_conn()
 
-    # 云部署环境可设置 SKIP_DATA_SYNC=true 跳过启动数据同步，避免网络超时挂起
-    skip_sync = os.getenv("SKIP_DATA_SYNC", "").lower() in ("true", "1", "yes")
-    if skip_sync:
-        logger.info("SKIP_DATA_SYNC=true，跳过启动数据同步")
-    else:
-        # 启动时检查并同步数据
-        sync_results = sync_startup_data()
-        synced_count = sum(1 for v in sync_results.values() if v["synced"])
-        failed_count = sum(1 for v in sync_results.values() if not v["synced"])
-        logger.info(
-            "数据同步摘要: 成功 {} / 失败 {} / 总计 {}",
-            synced_count, failed_count, len(sync_results),
-        )
+    # 启动时检查并同步数据
+    sync_results = sync_startup_data()
+    synced_count = sum(1 for v in sync_results.values() if v["synced"])
+    failed_count = sum(1 for v in sync_results.values() if not v["synced"])
+    logger.info(
+        "数据同步摘要: 成功 {} / 失败 {} / 总计 {}",
+        synced_count, failed_count, len(sync_results),
+    )
 
     logger.success("应用启动引导完成")
