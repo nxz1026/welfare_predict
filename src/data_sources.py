@@ -22,7 +22,7 @@ from typing import Dict, Optional
 import pandas as pd
 from loguru import logger
 
-from .config import LotteryModelConfig, PATHS, LOTTERY_CONFIGS
+from .config import LotteryModelConfig, PATHS, LOTTERY_CONFIGS, NETWORK_CONFIG
 
 
 @dataclass
