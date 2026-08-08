@@ -262,9 +262,9 @@
                     </optgroup>
                     <optgroup label="AI 模型">
                         <option value="XGBoost ML">XGBoost ML</option>
-                        <option value="LSTM ML">LSTM ML</option>
-                        <option value="Poisson ML">Poisson 先验 ML</option>
-                        <option value="Stacking ML">Stacking 集成 ML</option>
+                        <option value="LSTM ML" disabled style="color:#999;">LSTM ML (待升级)</option>
+                        <option value="Poisson ML" disabled style="color:#999;">Poisson 先验 ML (待升级)</option>
+                        <option value="Stacking ML" disabled style="color:#999;">Stacking 集成 ML (待升级)</option>
                     </optgroup>
                 </select>
             </div>
@@ -506,27 +506,51 @@
             return false;
         }
 
-        // 动态加载可用训练方法（隐藏不可用的 LSTM/Stacking）
+        // 动态加载可用训练方法（不可用方法标注"待升级"）
         async function loadAvailableMethods() {
             try {
                 const res = await fetch('/api/v1/train/methods');
                 if (!res.ok) return;
                 const data = await res.json();
+                // 更新 ML 预测方法选择器
                 const select = document.getElementById('ml-method');
-                if (!select) return;
-                select.innerHTML = '';
-                data.methods.forEach(m => {
-                    const opt = document.createElement('option');
-                    opt.value = m.id;
-                    if (m.available) {
-                        opt.textContent = m.name;
-                    } else {
-                        opt.textContent = m.name + ' (待升级)';
-                        opt.disabled = true;
-                        opt.style.color = '#999';
-                    }
-                    select.appendChild(opt);
-                });
+                if (select) {
+                    select.innerHTML = '';
+                    data.methods.forEach(m => {
+                        const opt = document.createElement('option');
+                        opt.value = m.id;
+                        if (m.available) {
+                            opt.textContent = m.name;
+                        } else {
+                            opt.textContent = m.name + ' (待升级)';
+                            opt.disabled = true;
+                            opt.style.color = '#999';
+                        }
+                        select.appendChild(opt);
+                    });
+                }
+                // 更新自选AI推荐策略中的 AI 模型选项
+                const customSelect = document.getElementById('custom-strategy');
+                if (customSelect) {
+                    const mlMap = {xgb: 'XGBoost ML', lstm: 'LSTM ML', poisson: 'Poisson ML', stacking: 'Stacking ML'};
+                    const mlNames = {xgb: 'XGBoost ML', lstm: 'LSTM ML', poisson: 'Poisson 先验 ML', stacking: 'Stacking 集成 ML'};
+                    data.methods.forEach(m => {
+                        const val = mlMap[m.id];
+                        if (!val) return;
+                        const opt = customSelect.querySelector(`option[value="${val}"]`);
+                        if (opt) {
+                            if (!m.available) {
+                                opt.textContent = mlNames[m.id] + ' (待升级)';
+                                opt.disabled = true;
+                                opt.style.color = '#999';
+                            } else {
+                                opt.textContent = mlNames[m.id];
+                                opt.disabled = false;
+                                opt.style.color = '';
+                            }
+                        }
+                    });
+                }
             } catch (e) {
                 // 忽略，保留默认选项
             }
