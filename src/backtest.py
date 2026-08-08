@@ -428,14 +428,19 @@ class BacktestEngine:
     def _train_models(self, X_train: np.ndarray, y_train: np.ndarray) -> tuple:
         """训练所有模型（简化版）"""
         from .modeling import XGBoostPredictor
-        from .model_lstm import LSTMPredictor
         from .model_poisson import PoissonPrior
 
         xgb = XGBoostPredictor(self.config)
         xgb.train(X_train, y_train)
 
-        lstm = LSTMPredictor(self.config)
-        lstm.train(X_train, y_train)
+        # LSTM 需要 TensorFlow，未安装时跳过
+        try:
+            from .model_lstm import LSTMPredictor
+            lstm = LSTMPredictor(self.config)
+            lstm.train(X_train, y_train)
+        except ImportError:
+            logger.warning("TensorFlow 未安装，跳过 LSTM 模型训练")
+            lstm = None
 
         poisson = PoissonPrior(self.config)
         poisson.train(X_train, y_train)
@@ -446,6 +451,8 @@ class BacktestEngine:
         """使用模型预测下一期"""
         probas = []
         for m in [xgb, lstm, poisson]:
+            if m is None:
+                continue
             try:
                 p = m.predict_proba(X_next)[0]
                 probas.append(p)

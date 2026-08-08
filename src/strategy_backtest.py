@@ -95,7 +95,13 @@ class StrategyBacktestEngine:
         engine = RecommendationEngine(self.config.code)
 
         # P3-15: 预创建 ML pipeline 并缓存，避免每轮重建
-        ml_methods = ["xgb", "lstm", "poisson", "stacking"]
+        # lstm/stacking 需要 TensorFlow，未安装时跳过
+        ml_methods = ["xgb", "poisson"]
+        try:
+            from .model_lstm import LSTMPredictor  # noqa: F401
+            ml_methods.extend(["lstm", "stacking"])
+        except ImportError:
+            logger.warning("TensorFlow 未安装，跳过 LSTM/Stacking 策略回测")
         ml_pipelines: Dict[str, UnifiedPipeline] = {}
         ml_trained_at: Dict[str, int] = {}  # 记录上次训练的窗口索引
         if include_ml:
