@@ -12,9 +12,20 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# 安装依赖（DevCloud 预处理器会自动注入阿里云 pip 镜像，无需手动配置）
+# 系统编译依赖（lxml/scikit-learn 等需要）
+# DevCloud 预处理器会自动注入阿里云 APT 镜像，无需手动配置
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc g++ libxml2-dev libxslt1-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# 安装 Python 依赖（DevCloud 预处理器会自动注入阿里云 pip 镜像）
 COPY requirements-min.txt ./
 RUN pip install --no-cache-dir -r requirements-min.txt
+
+# 清理编译依赖（减小镜像体积）
+RUN apt-get purge -y gcc g++ libxml2-dev libxslt1-dev && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
 
 # 复制项目文件
 COPY src/ src/
