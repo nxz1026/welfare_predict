@@ -214,11 +214,14 @@ class UnifiedPipeline:
         # 拼接 meta-features: (n_val, num_classes * 3)
         meta_X = np.concatenate([xgb_proba, lstm_proba, poisson_proba], axis=1)
 
-        # 3. 训练元学习器（MultiOutputClassifier 适配多标签二值矩阵）
-        from sklearn.multioutput import MultiOutputClassifier
-        from sklearn.linear_model import LogisticRegression as LR
-        base_lr = LR(max_iter=1000, C=1.0)
-        meta_learner = MultiOutputClassifier(base_lr)
+        # 3. 训练元学习器
+        # 使用 Ridge 回归替代 LogisticRegression：
+        # - 元学习器输入是基学习器的概率输出（连续值），回归更自然
+        # - LogisticRegression 要求每个输出至少2个类别，验证集数据少时会报错
+        from sklearn.multioutput import MultiOutputRegressor
+        from sklearn.linear_model import Ridge
+
+        meta_learner = MultiOutputRegressor(Ridge(alpha=1.0))
         meta_learner.fit(meta_X, y_val)
 
         # 4. 封装为 StackingEnsemble
@@ -362,8 +365,9 @@ class StackingEnsemble:
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         """预测每个号码被选中的概率。
 
-        MultiOutputClassifier.predict_proba 返回 List[(n, 2)]，
-        需拼接为 (n, num_classes) 矩阵，每列取正类概率。
+        兼容两种元学习器：
+        - MultiOutputClassifier: predict_proba 返回 List[(n, 2)]，取正类概率
+        - MultiOutputRegressor (Ridge): predict 返回 (n, num_classes) 连续值，clip 到 [0,1]
         """
         # 收集所有基学习器的概率预测
         probas = []
@@ -374,17 +378,22 @@ class StackingEnsemble:
         # 拼接作为 meta-features
         meta_X = np.concatenate(probas, axis=1)
 
-        # 元学习器预测 — 兼容 MultiOutputClassifier 和 OneVsRestClassifier
-        raw = self.meta_learner.predict_proba(meta_X)
-        if isinstance(raw, list):
-            # MultiOutputClassifier 返回 List[(n, 2)]
-            n_samples = raw[0].shape[0]
-            result = np.zeros((n_samples, len(raw)), dtype=np.float32)
-            for i, proba_2col in enumerate(raw):
-                result[:, i] = proba_2col[:, 1]  # 取正类概率
-            return result
-        # OneVsRestClassifier 或其他返回 (n, num_classes)
-        return raw
+        # 元学习器预测 — 兼容 MultiOutputClassifier 和 MultiOutputRegressor
+        if hasattr(self.meta_learner, 'predict_proba'):
+            raw = self.meta_learner.predict_proba(meta_X)
+            if isinstance(raw, list):
+                # MultiOutputClassifier 返回 List[(n, 2)]
+                n_samples = raw[0].shape[0]
+                result = np.zeros((n_samples, len(raw)), dtype=np.float32)
+                for i, proba_2col in enumerate(raw):
+                    result[:, i] = proba_2col[:, 1]  # 取正类概率
+                return result
+            return raw
+        else:
+            # MultiOutputRegressor (Ridge): predict 返回连续值
+            result = self.meta_learner.predict(meta_X).astype(np.float32)
+            # clip 到 [0, 1] 范围，确保概率语义
+            return np.clip(result, 0.0, 1.0)
 
     def save_model(self, path: str) -> None:
         """保存 Stacking 模型（包含所有子模型）。
